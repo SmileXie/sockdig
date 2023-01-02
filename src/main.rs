@@ -7,11 +7,23 @@ use std::io::Result;
 
 use netlink_packet_sock_diag::{
     constants::*,
-    inet::{ExtensionFlags, InetRequest, SocketId, StateFlags},
+    inet::{ExtensionFlags, InetRequest, InetResponse, SocketId, StateFlags},
     NetlinkHeader, NetlinkMessage, NetlinkPayload, SockDiagMessage,
 };
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 
+struct DigResult {
+    resp: InetResponse,
+}
+
+impl DigResult {
+    fn summary(&self) {
+        println!("{:>16}{:>16}", 
+            self.resp.header.socket_id.source_address, 
+            self.resp.header.socket_id.destination_address, 
+        )
+    }
+} 
 
 fn print_help() {
     println!("Sockdig Help:");
@@ -19,7 +31,7 @@ fn print_help() {
 
 fn sock_init() -> Result<Socket> {
     let mut sock =  Socket::new(NETLINK_SOCK_DIAG)?;
-    let addr = sock.bind_auto()?;
+    let _addr = sock.bind_auto()?;
     sock.connect(&SocketAddr::new(0, 0));
 
     Ok(sock)
@@ -98,29 +110,55 @@ fn main() {
 
     let mut receive_buffer = vec![0; 4096];
     let mut offset = 0;
-    while let Ok(size) = sock.recv(&mut &mut receive_buffer[..], 0) {
+    let mut rsts: Vec<DigResult> = vec![];
+    let mut done: bool = false;
+    loop {
+        if done {
+            break;
+        }
+
+        let mut recv_size = 0;
+        match sock.recv(&mut &mut receive_buffer[..], 0) {
+            Ok(size) => {recv_size = size;},
+            Err(e) => {
+                log::error!("Recv failed. {}", e);
+                break;
+            }
+        }
+
         loop {
             let bytes = &receive_buffer[offset..];
             let rx_packet = <NetlinkMessage<SockDiagMessage>>::deserialize(bytes).unwrap();
-            log::debug!("<<< {:?}", rx_packet);
+            log::debug!("<<< rx_packet: {:?}", rx_packet);
 
             match rx_packet.payload {
                 NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
                 NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
-                    log::debug!("{:#?}", response);
+                    rsts.push(DigResult{resp: (*response).clone()});
+                    log::debug!("<<<<<<< Response: {:#?}", response);
                 }
                 NetlinkPayload::Done => {
-                    log::debug!("Done!");
-                    return;
+                    log::debug!("<<<<<<< Done!");
+                    done = true;
+                    break;
                 }
-                _ => return,
+                _ => {
+                    log::debug!("Invalid payload.");
+                    done = true;
+                    break;
+                }
             }
 
             offset += rx_packet.header.length as usize;
-            if offset == size || rx_packet.header.length == 0 {
+            if offset == recv_size || rx_packet.header.length == 0 {
                 offset = 0;
                 break;
             }
         }
+    
+    }
+
+    for rst in rsts {
+        rst.summary();
     }
 }
