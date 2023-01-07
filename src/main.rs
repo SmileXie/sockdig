@@ -18,10 +18,35 @@ struct DigResult {
 
 impl DigResult {
     fn summary(&self) {
-        println!("{:>16}{:>16}", 
+        let src: String = format!("{}:{}",
             self.resp.header.socket_id.source_address, 
+            self.resp.header.socket_id.source_port);
+        let dst: String = format!("{}:{}", 
             self.resp.header.socket_id.destination_address, 
-        )
+            self.resp.header.socket_id.destination_port);
+
+        println!("{:<20}{:<24}{:<24}{:<8}", 
+            self.tcp_state(self.resp.header.state), src, dst, 
+            self.resp.header.inode);
+    }
+
+    fn tcp_state(&self, state: u8) -> &str {
+        let ret = match state {
+            TCP_ESTABLISHED => "TCP_ESTABLISHED",
+            TCP_SYN_SENT => "TCP_SYN_SENT",
+            TCP_SYN_RECV => "TCP_SYN_RECV",
+            TCP_FIN_WAIT1 => "TCP_FIN_WAIT1",
+            TCP_FIN_WAIT2 => "TCP_FIN_WAIT2",
+            TCP_TIME_WAIT => "TCP_TIME_WAIT",
+            TCP_CLOSE => "TCP_CLOSE",
+            TCP_CLOSE_WAIT => "TCP_CLOSE_WAIT",
+            TCP_LAST_ACK => "TCP_LAST_ACK",
+            TCP_LISTEN => "TCP_LISTEN",
+            TCP_CLOSING => "TCP_CLOSING",
+            _ => "TCP_UNKNOWN"
+        };
+
+        return ret;
     }
 } 
 
