@@ -54,10 +54,16 @@ fn print_help() {
     println!("Sockdig Help:");
 }
 
+fn print_header() {
+    println!("{:<20}{:<24}{:<24}{:<8}", 
+            "State", "Source", "Destination", 
+            "Inode");
+}
+
 fn sock_init() -> Result<Socket> {
     let mut sock =  Socket::new(NETLINK_SOCK_DIAG)?;
     let _addr = sock.bind_auto()?;
-    sock.connect(&SocketAddr::new(0, 0));
+    sock.connect(&SocketAddr::new(0, 0))?;
 
     Ok(sock)
 }
@@ -142,7 +148,7 @@ fn main() {
             break;
         }
 
-        let mut recv_size = 0;
+        let recv_size;
         match sock.recv(&mut &mut receive_buffer[..], 0) {
             Ok(size) => {recv_size = size;},
             Err(e) => {
@@ -182,8 +188,11 @@ fn main() {
         }
     
     }
-
+    
+    print_header();
     for rst in rsts {
         rst.summary();
     }
 }
+
+// TODO: how to get pid of an opened inode.
