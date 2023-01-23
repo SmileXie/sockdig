@@ -1,10 +1,14 @@
 use std::env;
 use std::fs;
+use std::path;
+use procfs::ProcError;
 use simplelog;
 use log;
 use std::process::exit;
-use std::io::Result;
-
+use std::io;
+use regex::Regex;
+use std::collections::HashMap;
+use procfs::process::{FDTarget, Stat};
 use netlink_packet_sock_diag::{
     constants::*,
     inet::{ExtensionFlags, InetRequest, InetResponse, SocketId, StateFlags},
@@ -13,22 +17,76 @@ use netlink_packet_sock_diag::{
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 
 struct DigResult {
-    resp: InetResponse,
+    resp: Vec<InetResponse>,
+    inode_to_pid_map: HashMap<u64, Vec<Stat>>,
 }
 
 impl DigResult {
-    fn summary(&self) {
-        let src: String = format!("{}:{}",
-            self.resp.header.socket_id.source_address, 
-            self.resp.header.socket_id.source_port);
-        let dst: String = format!("{}:{}", 
-            self.resp.header.socket_id.destination_address, 
-            self.resp.header.socket_id.destination_port);
+    
+    fn resolve_procfs(&mut self) -> Result<u32, ProcError> {
+        let all_procs = procfs::process::all_processes()?;
 
-        println!("{:<20}{:<24}{:<24}{:<8}", 
-            self.tcp_state(self.resp.header.state), src, dst, 
-            self.resp.header.inode);
+        // build up a map between socket inodes and processes:
+        for p in all_procs {
+            if let Err(e) = p {
+                log::warn!("error in process info of procfs. {}", e);
+                continue;
+            }
+
+            let process = p.unwrap();
+            if let (Ok(stat), Ok(fds)) = (process.stat(), process.fd()) {
+                for fd in fds {
+                    if let FDTarget::Socket(inode) = fd.unwrap().target {
+                        self.inode_to_pid_map.entry(inode)
+                            // If there's no entry for key inode, create a new Vec and return a mutable ref to it
+                            .or_default()
+                            // and insert the item onto the Vec
+                            .push(stat.clone()); 
+                        // refer to https://stackoverflow.com/questions/51584729/how-can-i-store-multiple-elements-in-a-rust-hashmap-for-the-same-key
+                    }
+                }
+            }
+        }
+
+        return Ok(0);
     }
+
+    fn summary(&self) {
+        println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
+            "State", "Source", "Destination", 
+            "Inode", "Processes");
+        
+        for resp_entry in &self.resp {
+            let src: String = format!("{}:{}",
+                resp_entry.header.socket_id.source_address, 
+                resp_entry.header.socket_id.source_port);
+            let dst: String = format!("{}:{}", 
+                resp_entry.header.socket_id.destination_address, 
+                resp_entry.header.socket_id.destination_port);
+                
+            let proc_stats 
+                = self.inode_to_pid_map.get(&(resp_entry.header.inode as u64));
+            match proc_stats {
+                Some(states) => {
+                    let mut proc_stats_str = String::new();
+                    for stat in states {
+                        let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                        proc_stats_str.push_str(&a_proc_str);
+                    }
+        
+                    println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
+                        self.tcp_state(resp_entry.header.state), src, dst, 
+                        resp_entry.header.inode, proc_stats_str);
+                    
+                },
+                None => {           
+                        println!("{:<20}{:<24}{:<24}{:<8}", 
+                            self.tcp_state(resp_entry.header.state), src, dst, 
+                            resp_entry.header.inode);
+                }
+            }
+        }
+    }        
 
     fn tcp_state(&self, state: u8) -> &str {
         let ret = match state {
@@ -54,13 +112,7 @@ fn print_help() {
     println!("Sockdig Help:");
 }
 
-fn print_header() {
-    println!("{:<20}{:<24}{:<24}{:<8}", 
-            "State", "Source", "Destination", 
-            "Inode");
-}
-
-fn sock_init() -> Result<Socket> {
+fn sock_init() -> io::Result<Socket> {
     let mut sock =  Socket::new(NETLINK_SOCK_DIAG)?;
     let _addr = sock.bind_auto()?;
     sock.connect(&SocketAddr::new(0, 0))?;
@@ -108,6 +160,11 @@ fn main() {
         }
     };
 
+    let mut rsts: DigResult = DigResult {
+        resp: Vec::new(),
+        inode_to_pid_map: HashMap::new()
+    };
+    
     let mut packet = NetlinkMessage {
         header: NetlinkHeader {
             flags: NLM_F_REQUEST | NLM_F_DUMP,
@@ -141,7 +198,6 @@ fn main() {
 
     let mut receive_buffer = vec![0; 4096];
     let mut offset = 0;
-    let mut rsts: Vec<DigResult> = vec![];
     let mut done: bool = false;
     loop {
         if done {
@@ -165,7 +221,7 @@ fn main() {
             match rx_packet.payload {
                 NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
                 NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
-                    rsts.push(DigResult{resp: (*response).clone()});
+                    rsts.resp.push((*response).clone());
                     log::debug!("<<<<<<< Response: {:#?}", response);
                 }
                 NetlinkPayload::Done => {
@@ -188,11 +244,13 @@ fn main() {
         }
     
     }
-    
-    print_header();
-    for rst in rsts {
-        rst.summary();
-    }
+
+    rsts.resolve_procfs();
+    rsts.summary();
 }
 
-// TODO: how to get pid of an opened inode.
+/*
+    reference:
+    https://github.com/eminence/procfs/blob/master/examples/netstat.rs
+    https://man7.org/linux/man-pages/man7/sock_diag.7.html
+ */
