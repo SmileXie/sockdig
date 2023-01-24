@@ -115,7 +115,7 @@ impl DigResult {
 
     fn tcp_udp_state_str(&self, state: u8, resp_entry: &RespEntry) -> &str {
         return match resp_entry {
-            RespEntry::TCP(r) => match state {
+            RespEntry::TCP(_r) => match state {
                 TCP_ESTABLISHED => "ESTABLISHED",
                 TCP_SYN_SENT => "SYN_SENT",
                 TCP_SYN_RECV => "SYN_RECV",
@@ -129,7 +129,7 @@ impl DigResult {
                 TCP_CLOSING => "CLOSING",
                 _ => "TCP_UNKNOWN"
             },
-            RespEntry::UDP(r) => match state {
+            RespEntry::UDP(_r) => match state {
                 TCP_ESTABLISHED => "ESTABLISHED",
                 TCP_CLOSE => "UNCONNECT",
                 TCP_LISTEN => "LISTEN",
@@ -142,8 +142,8 @@ impl DigResult {
 
     fn get_protocol_str(&self, resp_entry: &RespEntry) -> &str {
         return match resp_entry {
-            RespEntry::TCP(r) => "TCP",
-            RespEntry::UDP(r) => "UDP",
+            RespEntry::TCP(_r) => "TCP",
+            RespEntry::UDP(_r) => "UDP",
             _ => "UNKNOWN"
         }
     }
