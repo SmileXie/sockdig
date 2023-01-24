@@ -19,8 +19,18 @@ use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 enum RespEntry {
     TCP(InetResponse),
     UDP(InetResponse),
-    UNIX(UnixResponse)
+    UNIX(UnixResponse),
+    NONE,
 }
+
+enum SockType {
+    TcpV4,
+    UdpV4,
+    TcpV6,
+    UdpV6,
+    Unix
+}
+
 
 struct DigResult {
     resp: Vec<RespEntry>,
@@ -58,13 +68,13 @@ impl DigResult {
     }
 
     fn summary(&self) {
-        println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
-            "State", "Source", "Destination", 
+        println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+            "Protocol", "State", "Source", "Destination", 
             "Inode", "Processes");
         
         for resp_entry in &self.resp {
             match resp_entry {
-                RespEntry::TCP(r) => {
+                RespEntry::TCP(r) | RespEntry::UDP(r) => {
                     let src: String = format!("{}:{}",
                             r.header.socket_id.source_address, 
                             r.header.socket_id.source_port);
@@ -82,14 +92,16 @@ impl DigResult {
                                 proc_stats_str.push_str(&a_proc_str);
                             }
                 
-                            println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
-                                self.tcp_state(r.header.state), src, dst, 
+                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+                                self.get_protocol_str(resp_entry),
+                                self.tcp_udp_state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode, proc_stats_str);
                             
                         },
                         None => {           
-                                println!("{:<20}{:<24}{:<24}{:<8}", 
-                                    self.tcp_state(r.header.state), src, dst, 
+                                println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                                    self.get_protocol_str(resp_entry),
+                                    self.tcp_udp_state_str(r.header.state, resp_entry), src, dst, 
                                     r.header.inode);
                         }
                     }
@@ -101,23 +113,39 @@ impl DigResult {
         }
     }        
 
-    fn tcp_state(&self, state: u8) -> &str {
-        let ret = match state {
-            TCP_ESTABLISHED => "TCP_ESTABLISHED",
-            TCP_SYN_SENT => "TCP_SYN_SENT",
-            TCP_SYN_RECV => "TCP_SYN_RECV",
-            TCP_FIN_WAIT1 => "TCP_FIN_WAIT1",
-            TCP_FIN_WAIT2 => "TCP_FIN_WAIT2",
-            TCP_TIME_WAIT => "TCP_TIME_WAIT",
-            TCP_CLOSE => "TCP_CLOSE",
-            TCP_CLOSE_WAIT => "TCP_CLOSE_WAIT",
-            TCP_LAST_ACK => "TCP_LAST_ACK",
-            TCP_LISTEN => "TCP_LISTEN",
-            TCP_CLOSING => "TCP_CLOSING",
-            _ => "TCP_UNKNOWN"
-        };
+    fn tcp_udp_state_str(&self, state: u8, resp_entry: &RespEntry) -> &str {
+        return match resp_entry {
+            RespEntry::TCP(r) => match state {
+                TCP_ESTABLISHED => "ESTABLISHED",
+                TCP_SYN_SENT => "SYN_SENT",
+                TCP_SYN_RECV => "SYN_RECV",
+                TCP_FIN_WAIT1 => "FIN_WAIT1",
+                TCP_FIN_WAIT2 => "FIN_WAIT2",
+                TCP_TIME_WAIT => "TIME_WAIT",
+                TCP_CLOSE => "CLOSE",
+                TCP_CLOSE_WAIT => "CLOSE_WAIT",
+                TCP_LAST_ACK => "LAST_ACK",
+                TCP_LISTEN => "LISTEN",
+                TCP_CLOSING => "CLOSING",
+                _ => "TCP_UNKNOWN"
+            },
+            RespEntry::UDP(r) => match state {
+                TCP_ESTABLISHED => "ESTABLISHED",
+                TCP_CLOSE => "UNCONNECT",
+                TCP_LISTEN => "LISTEN",
+                TCP_CLOSING => "CLOSING",
+                _ => "UDP_UNKNOWN"
+            },
+            _ => "UNKNOWN"
+        }        
+    }
 
-        return ret;
+    fn get_protocol_str(&self, resp_entry: &RespEntry) -> &str {
+        return match resp_entry {
+            RespEntry::TCP(r) => "TCP",
+            RespEntry::UDP(r) => "UDP",
+            _ => "UNKNOWN"
+        }
     }
 } 
 
@@ -133,7 +161,8 @@ fn sock_init() -> io::Result<Socket> {
     Ok(sock)
 }
 
-fn query_netlink_for_tcp(sock: Socket, rsts: &mut DigResult) -> Result<u32, io::Error> {
+fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: SockType) 
+        -> Result<u32, io::Error> {
 
     let mut packet = NetlinkMessage {
         header: NetlinkHeader {
@@ -142,7 +171,11 @@ fn query_netlink_for_tcp(sock: Socket, rsts: &mut DigResult) -> Result<u32, io::
         },
         payload: SockDiagMessage::InetRequest(InetRequest {
             family: AF_INET,
-            protocol: IPPROTO_TCP,
+            protocol: match sock_type {
+                    SockType::TcpV4 => IPPROTO_TCP,
+                    SockType::UdpV4 => IPPROTO_UDP,
+                    _ => IPPROTO_NONE,
+                },
             extensions: ExtensionFlags::empty(),
             states: StateFlags::all(),
             socket_id: SocketId::new_v4(),
@@ -191,7 +224,13 @@ fn query_netlink_for_tcp(sock: Socket, rsts: &mut DigResult) -> Result<u32, io::
             match rx_packet.payload {
                 NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
                 NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
-                    rsts.resp.push(RespEntry::TCP((*response).clone()));
+                    rsts.resp.push(
+                        match sock_type {
+                            SockType::TcpV4 => RespEntry::TCP((*response).clone()),
+                            SockType::UdpV4 => RespEntry::UDP((*response).clone()),
+                            _ => RespEntry::NONE,
+                        }
+                    );
                     log::debug!("<<<<<<< Response: {:#?}", response);
                 }
                 NetlinkPayload::Done => {
@@ -263,7 +302,8 @@ fn main() {
         inode_to_pid_map: HashMap::new()
     };
 
-    query_netlink_for_tcp(sock, &mut rsts);
+    query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::TcpV4);
+    query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::UdpV4);
 
     rsts.resolve_procfs();
     rsts.summary();
