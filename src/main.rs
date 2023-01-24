@@ -6,18 +6,24 @@ use simplelog;
 use log;
 use std::process::exit;
 use std::io;
-use regex::Regex;
 use std::collections::HashMap;
 use procfs::process::{FDTarget, Stat};
 use netlink_packet_sock_diag::{
     constants::*,
     inet::{ExtensionFlags, InetRequest, InetResponse, SocketId, StateFlags},
+    unix::{UnixResponse},
     NetlinkHeader, NetlinkMessage, NetlinkPayload, SockDiagMessage,
 };
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 
+enum RespEntry {
+    TCP(InetResponse),
+    UDP(InetResponse),
+    UNIX(UnixResponse)
+}
+
 struct DigResult {
-    resp: Vec<InetResponse>,
+    resp: Vec<RespEntry>,
     inode_to_pid_map: HashMap<u64, Vec<Stat>>,
 }
 
@@ -57,34 +63,41 @@ impl DigResult {
             "Inode", "Processes");
         
         for resp_entry in &self.resp {
-            let src: String = format!("{}:{}",
-                resp_entry.header.socket_id.source_address, 
-                resp_entry.header.socket_id.source_port);
-            let dst: String = format!("{}:{}", 
-                resp_entry.header.socket_id.destination_address, 
-                resp_entry.header.socket_id.destination_port);
-                
-            let proc_stats 
-                = self.inode_to_pid_map.get(&(resp_entry.header.inode as u64));
-            match proc_stats {
-                Some(states) => {
-                    let mut proc_stats_str = String::new();
-                    for stat in states {
-                        let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
-                        proc_stats_str.push_str(&a_proc_str);
-                    }
-        
-                    println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
-                        self.tcp_state(resp_entry.header.state), src, dst, 
-                        resp_entry.header.inode, proc_stats_str);
+            match resp_entry {
+                RespEntry::TCP(r) => {
+                    let src: String = format!("{}:{}",
+                            r.header.socket_id.source_address, 
+                            r.header.socket_id.source_port);
+                    let dst: String = format!("{}:{}",
+                            r.header.socket_id.destination_address, 
+                            r.header.socket_id.destination_port);
+
+                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
                     
+                    match proc_stats {
+                        Some(states) => {
+                            let mut proc_stats_str = String::new();
+                            for stat in states {
+                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                                proc_stats_str.push_str(&a_proc_str);
+                            }
+                
+                            println!("{:<20}{:<24}{:<24}{:<8}{:<24}", 
+                                self.tcp_state(r.header.state), src, dst, 
+                                r.header.inode, proc_stats_str);
+                            
+                        },
+                        None => {           
+                                println!("{:<20}{:<24}{:<24}{:<8}", 
+                                    self.tcp_state(r.header.state), src, dst, 
+                                    r.header.inode);
+                        }
+                    }
+
                 },
-                None => {           
-                        println!("{:<20}{:<24}{:<24}{:<8}", 
-                            self.tcp_state(resp_entry.header.state), src, dst, 
-                            resp_entry.header.inode);
-                }
+                _ => {}
             }
+
         }
     }        
 
@@ -118,6 +131,91 @@ fn sock_init() -> io::Result<Socket> {
     sock.connect(&SocketAddr::new(0, 0))?;
 
     Ok(sock)
+}
+
+fn query_netlink_for_tcp(sock: Socket, rsts: &mut DigResult) -> Result<u32, io::Error> {
+
+    let mut packet = NetlinkMessage {
+        header: NetlinkHeader {
+            flags: NLM_F_REQUEST | NLM_F_DUMP,
+            ..Default::default()
+        },
+        payload: SockDiagMessage::InetRequest(InetRequest {
+            family: AF_INET,
+            protocol: IPPROTO_TCP,
+            extensions: ExtensionFlags::empty(),
+            states: StateFlags::all(),
+            socket_id: SocketId::new_v4(),
+        })
+        .into(),
+    };
+
+    packet.finalize();
+
+    let mut buf = vec![0; packet.header.length as usize];
+
+    // Before calling serialize, it is important to check that the buffer in which
+    // we're emitting is big enough for the packet, other `serialize()` panics.
+    assert_eq!(buf.len(), packet.buffer_len());
+
+    packet.serialize(&mut buf[..]);
+
+    log::debug!(">>> {:?}", packet);
+    if let Err(e) = sock.send(&buf[..], 0) {
+        log::debug!("SEND ERROR {}", e);
+        return Err(e);
+    }
+
+    let mut receive_buffer = vec![0; 4096];
+    let mut offset = 0;
+    let mut done: bool = false;
+    loop {
+        if done {
+            break;
+        }
+
+        let recv_size;
+        match sock.recv(&mut &mut receive_buffer[..], 0) {
+            Ok(size) => {recv_size = size;},
+            Err(e) => {
+                log::error!("Recv failed. {}", e);
+                break;
+            }
+        }
+
+        loop {
+            let bytes = &receive_buffer[offset..];
+            let rx_packet = <NetlinkMessage<SockDiagMessage>>::deserialize(bytes).unwrap();
+            log::debug!("<<< rx_packet: {:?}", rx_packet);
+
+            match rx_packet.payload {
+                NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
+                NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
+                    rsts.resp.push(RespEntry::TCP((*response).clone()));
+                    log::debug!("<<<<<<< Response: {:#?}", response);
+                }
+                NetlinkPayload::Done => {
+                    log::debug!("<<<<<<< Done!");
+                    done = true;
+                    break;
+                }
+                _ => {
+                    log::debug!("Invalid payload.");
+                    done = true;
+                    break;
+                }
+            }
+
+            offset += rx_packet.header.length as usize;
+            if offset == recv_size || rx_packet.header.length == 0 {
+                offset = 0;
+                break;
+            }
+        }
+    
+    }
+
+    return Ok(0);
 }
 
 fn main() {
@@ -164,86 +262,8 @@ fn main() {
         resp: Vec::new(),
         inode_to_pid_map: HashMap::new()
     };
-    
-    let mut packet = NetlinkMessage {
-        header: NetlinkHeader {
-            flags: NLM_F_REQUEST | NLM_F_DUMP,
-            ..Default::default()
-        },
-        payload: SockDiagMessage::InetRequest(InetRequest {
-            family: AF_INET,
-            protocol: IPPROTO_TCP,
-            extensions: ExtensionFlags::empty(),
-            states: StateFlags::all(),
-            socket_id: SocketId::new_v4(),
-        })
-        .into(),
-    };
 
-    packet.finalize();
-
-    let mut buf = vec![0; packet.header.length as usize];
-
-    // Before calling serialize, it is important to check that the buffer in which
-    // we're emitting is big enough for the packet, other `serialize()` panics.
-    assert_eq!(buf.len(), packet.buffer_len());
-
-    packet.serialize(&mut buf[..]);
-
-    log::debug!(">>> {:?}", packet);
-    if let Err(e) = sock.send(&buf[..], 0) {
-        log::debug!("SEND ERROR {}", e);
-        return;
-    }
-
-    let mut receive_buffer = vec![0; 4096];
-    let mut offset = 0;
-    let mut done: bool = false;
-    loop {
-        if done {
-            break;
-        }
-
-        let recv_size;
-        match sock.recv(&mut &mut receive_buffer[..], 0) {
-            Ok(size) => {recv_size = size;},
-            Err(e) => {
-                log::error!("Recv failed. {}", e);
-                break;
-            }
-        }
-
-        loop {
-            let bytes = &receive_buffer[offset..];
-            let rx_packet = <NetlinkMessage<SockDiagMessage>>::deserialize(bytes).unwrap();
-            log::debug!("<<< rx_packet: {:?}", rx_packet);
-
-            match rx_packet.payload {
-                NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
-                NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
-                    rsts.resp.push((*response).clone());
-                    log::debug!("<<<<<<< Response: {:#?}", response);
-                }
-                NetlinkPayload::Done => {
-                    log::debug!("<<<<<<< Done!");
-                    done = true;
-                    break;
-                }
-                _ => {
-                    log::debug!("Invalid payload.");
-                    done = true;
-                    break;
-                }
-            }
-
-            offset += rx_packet.header.length as usize;
-            if offset == recv_size || rx_packet.header.length == 0 {
-                offset = 0;
-                break;
-            }
-        }
-    
-    }
+    query_netlink_for_tcp(sock, &mut rsts);
 
     rsts.resolve_procfs();
     rsts.summary();
