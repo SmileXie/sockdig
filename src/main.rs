@@ -10,8 +10,10 @@ use std::collections::HashMap;
 use procfs::process::{FDTarget, Stat};
 use netlink_packet_sock_diag::{
     constants::*,
-    inet::{ExtensionFlags, InetRequest, InetResponse, SocketId, StateFlags},
-    unix::{UnixResponse},
+    inet,
+    inet::{ExtensionFlags, InetRequest, InetResponse, SocketId},
+    unix,
+    unix::{UnixRequest, UnixResponse, ShowFlags},
     NetlinkHeader, NetlinkMessage, NetlinkPayload, SockDiagMessage,
 };
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
@@ -94,26 +96,58 @@ impl DigResult {
                 
                             println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
                                 self.get_protocol_str(resp_entry),
-                                self.tcp_udp_state_str(r.header.state, resp_entry), src, dst, 
+                                self.state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode, proc_stats_str);
                             
                         },
                         None => {           
                                 println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
                                     self.get_protocol_str(resp_entry),
-                                    self.tcp_udp_state_str(r.header.state, resp_entry), src, dst, 
+                                    self.state_str(r.header.state, resp_entry), src, dst, 
                                     r.header.inode);
                         }
                     }
 
                 },
+                RespEntry::UNIX(r) => {
+                    let src: String = format!("*:{}", r.header.inode);
+                    let dst_inode: String = match r.peer() {
+                        Some(p) => p.to_string(),
+                        None => "*".to_string()
+                    };
+                    let dst: String = format!("*:{}", dst_inode);
+
+                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
+                    
+                    match proc_stats {
+                        Some(states) => {
+                            let mut proc_stats_str = String::new();
+                            for stat in states {
+                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                                proc_stats_str.push_str(&a_proc_str);
+                            }
+                
+                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+                                self.get_protocol_str(resp_entry),
+                                self.state_str(r.header.state, resp_entry), src, dst, 
+                                r.header.inode, proc_stats_str);
+                            
+                        },
+                        None => {           
+                                println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                                    self.get_protocol_str(resp_entry),
+                                    self.state_str(r.header.state, resp_entry), src, dst, 
+                                    r.header.inode);
+                        }
+                    }
+                }
                 _ => {}
             }
 
         }
     }        
 
-    fn tcp_udp_state_str(&self, state: u8, resp_entry: &RespEntry) -> &str {
+    fn state_str(&self, state: u8, resp_entry: &RespEntry) -> &str {
         return match resp_entry {
             RespEntry::TCP(_r) => match state {
                 TCP_ESTABLISHED => "ESTABLISHED",
@@ -128,6 +162,20 @@ impl DigResult {
                 TCP_LISTEN => "LISTEN",
                 TCP_CLOSING => "CLOSING",
                 _ => "TCP_UNKNOWN"
+            },
+            RespEntry::UNIX(_r) => match state {
+                TCP_ESTABLISHED => "ESTABLISHED",
+                TCP_SYN_SENT => "SYN_SENT",
+                TCP_SYN_RECV => "SYN_RECV",
+                TCP_FIN_WAIT1 => "FIN_WAIT1",
+                TCP_FIN_WAIT2 => "FIN_WAIT2",
+                TCP_TIME_WAIT => "TIME_WAIT",
+                TCP_CLOSE => "CLOSE",
+                TCP_CLOSE_WAIT => "CLOSE_WAIT",
+                TCP_LAST_ACK => "LAST_ACK",
+                TCP_LISTEN => "LISTEN",
+                TCP_CLOSING => "CLOSING",
+                _ => "UNIX_UNKNOWN"
             },
             RespEntry::UDP(_r) => match state {
                 TCP_ESTABLISHED => "ESTABLISHED",
@@ -144,6 +192,7 @@ impl DigResult {
         return match resp_entry {
             RespEntry::TCP(_r) => "TCP",
             RespEntry::UDP(_r) => "UDP",
+            RespEntry::UNIX(_r) => "UNIX",
             _ => "UNKNOWN"
         }
     }
@@ -159,6 +208,91 @@ fn sock_init() -> io::Result<Socket> {
     sock.connect(&SocketAddr::new(0, 0))?;
 
     Ok(sock)
+}
+
+fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult) 
+        -> Result<u32, io::Error> {
+            
+    let mut packet = NetlinkMessage {
+        header: NetlinkHeader {
+            flags: NLM_F_REQUEST | NLM_F_DUMP,
+            ..Default::default()
+        },
+        payload: SockDiagMessage::UnixRequest(UnixRequest {
+            state_flags: unix::StateFlags::all(),
+            inode: 0,
+            show_flags: ShowFlags::all(),
+            cookie: [0; 8]
+        })
+        .into(),
+    };
+
+    packet.finalize();
+
+    let mut buf = vec![0; packet.header.length as usize];
+
+    // Before calling serialize, it is important to check that the buffer in which
+    // we're emitting is big enough for the packet, other `serialize()` panics.
+    assert_eq!(buf.len(), packet.buffer_len());
+
+    packet.serialize(&mut buf[..]);
+
+    log::debug!(">>> {:?}", packet);
+    if let Err(e) = sock.send(&buf[..], 0) {
+        log::debug!("SEND ERROR {}", e);
+        return Err(e);
+    }
+
+    let mut receive_buffer = vec![0; 4096];
+    let mut offset = 0;
+    let mut done: bool = false;
+    loop {
+        if done {
+            break;
+        }
+
+        let recv_size;
+        match sock.recv(&mut &mut receive_buffer[..], 0) {
+            Ok(size) => {recv_size = size;},
+            Err(e) => {
+                log::error!("Recv failed. {}", e);
+                break;
+            }
+        }
+
+        loop {
+            let bytes = &receive_buffer[offset..];
+            let rx_packet = <NetlinkMessage<SockDiagMessage>>::deserialize(bytes).unwrap();
+            log::debug!("<<< rx_packet: {:?}", rx_packet);
+
+            match rx_packet.payload {
+                NetlinkPayload::Noop | NetlinkPayload::Ack(_) => {}
+                NetlinkPayload::InnerMessage(SockDiagMessage::UnixResponse(response)) => {
+                    rsts.resp.push(RespEntry::UNIX((*response).clone()));
+                    log::debug!("<<<<<<< Response: {:#?}", response);
+                }
+                NetlinkPayload::Done => {
+                    log::debug!("<<<<<<< Done!");
+                    done = true;
+                    break;
+                }
+                _ => {
+                    log::debug!("Invalid payload.");
+                    done = true;
+                    break;
+                }
+            }
+
+            offset += rx_packet.header.length as usize;
+            if offset == recv_size || rx_packet.header.length == 0 {
+                offset = 0;
+                break;
+            }
+        }
+    
+    }
+
+    return Ok(0);
 }
 
 fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: SockType) 
@@ -177,7 +311,7 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
                     _ => IPPROTO_NONE,
                 },
             extensions: ExtensionFlags::empty(),
-            states: StateFlags::all(),
+            states: inet::StateFlags::all(),
             socket_id: SocketId::new_v4(),
         })
         .into(),
@@ -304,13 +438,16 @@ fn main() {
 
     query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::TcpV4);
     query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::UdpV4);
+    query_netlink_for_unix(&sock, &mut rsts);
 
     rsts.resolve_procfs();
     rsts.summary();
 }
 
 /*
-    reference:
+    Reference:
     https://github.com/eminence/procfs/blob/master/examples/netstat.rs
     https://man7.org/linux/man-pages/man7/sock_diag.7.html
+    https://github.com/little-dude/netlink/blob/master/netlink-packet-sock-diag/examples/dump_ipv4.rs
+
  */
