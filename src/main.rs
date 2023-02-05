@@ -69,6 +69,71 @@ impl DigResult {
         return Ok(0);
     }
 
+    // todo: fn detail(), print detailed memory info in detail
+    fn detail(&self) {
+        let mut num = 0;
+        for resp_entry in &self.resp {
+            match resp_entry {
+                RespEntry::TCP(r) | RespEntry::UDP(r) => {
+                    println!("Entry {}", num);
+                    num += 1;
+                    let src: String = format!("{}:{}",
+                            r.header.socket_id.source_address, 
+                            r.header.socket_id.source_port);
+                    let dst: String = format!("{}:{}",
+                            r.header.socket_id.destination_address, 
+                            r.header.socket_id.destination_port);
+                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
+                    let mut proc_stats_str = String::new();
+                    match proc_stats {
+                        Some(states) => {                            
+                            for stat in states {
+                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                                proc_stats_str.push_str(&a_proc_str);
+                            }                            
+                        },
+                        None => {}
+                    }
+                    println!("\tProtocol: {}", self.get_protocol_str(resp_entry));
+                    println!("\tState: {}", self.state_str(r.header.state, resp_entry));
+                    println!("\tSource: {}", src);
+                    println!("\tDestination: {}", dst);
+                    println!("\tInode: {}", r.header.inode);
+                    println!("\tAccessing Processes: {}", proc_stats_str);
+                },
+                RespEntry::UNIX(r) => {
+                    println!("Entry {}", num);
+                    num += 1;
+                    let src: String = format!("*:{}", r.header.inode);
+                    let dst_inode: String = match r.peer() {
+                        Some(p) => p.to_string(),
+                        None => "*".to_string()
+                    };
+                    let dst: String = format!("*:{}", dst_inode);
+                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
+                    let mut proc_stats_str = String::new();
+                    match proc_stats {
+                        Some(states) => {                            
+                            for stat in states {
+                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                                proc_stats_str.push_str(&a_proc_str);
+                            }                            
+                        },
+                        None => {}
+                    }
+
+                    println!("\tProtocol: {}", self.get_protocol_str(resp_entry));
+                    println!("\tState: {}", self.state_str(r.header.state, resp_entry));
+                    println!("\tSource: {}", src);
+                    println!("\tDestination: {}", dst);
+                    println!("\tInode: {}", r.header.inode);
+                    println!("\tAccessing Processes: {}", proc_stats_str);
+                },
+                _ => {}
+            }
+        }
+    }
+
     fn summary(&self) {
         println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
             "Protocol", "State", "Source", "Destination", 
@@ -441,7 +506,8 @@ fn main() {
     query_netlink_for_unix(&sock, &mut rsts);
 
     rsts.resolve_procfs();
-    rsts.summary();
+    //rsts.summary(); //todo: use config to determine summary or detail
+    rsts.detail();
 }
 
 /*
