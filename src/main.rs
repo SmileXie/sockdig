@@ -33,6 +33,11 @@ enum SockType {
     Unix
 }
 
+struct RunMode {
+    debug: bool,
+    detail: bool,
+}
+
 
 struct DigResult {
     resp: Vec<RespEntry>,
@@ -265,6 +270,8 @@ impl DigResult {
 
 fn print_help() {
     println!("Sockdig Help:");
+    println!("\t-h, --help: help");
+    println!("\t-d, --detail: detailed socket info");
 }
 
 fn sock_init() -> io::Result<Socket> {
@@ -460,14 +467,16 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
 
-    let mut debug_mode = false;
+    let mut run_mode = RunMode {debug: false, detail: false};
     if args.len() == 2 {
         if args[1] == "--help" || args[1] == "-h" {
             print_help();            
             exit(0);
-        } else if args[1] == "--debug" || args[1] == "-d" {
-            debug_mode = true;
-        } else {
+        } else if args[1] == "--debug" {
+            run_mode.debug = true;
+        } else if args[1] == "--detail" || args[1] == "-d" {
+            run_mode.detail = true;
+        }else {
             print_help();
             exit(0);
         }
@@ -476,7 +485,7 @@ fn main() {
         exit(0);
     }
 
-    if debug_mode {
+    if run_mode.debug {
         match fs::File::create(".sockdig.log") {
             Ok(fd) => {
                 simplelog::WriteLogger::init(simplelog::LevelFilter::Debug, simplelog::Config::default(), fd).unwrap();
@@ -506,8 +515,11 @@ fn main() {
     query_netlink_for_unix(&sock, &mut rsts);
 
     rsts.resolve_procfs();
-    //rsts.summary(); //todo: use config to determine summary or detail
-    rsts.detail();
+    if run_mode.detail {
+        rsts.detail();
+    } else {
+        rsts.summary();
+    }
 }
 
 /*
