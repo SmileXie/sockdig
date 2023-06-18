@@ -463,7 +463,7 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
     return Ok(0);
 }
 
-fn main() {
+fn args_to_runmode() -> RunMode {
 
     let args: Vec<String> = env::args().collect();
 
@@ -476,7 +476,7 @@ fn main() {
             run_mode.debug = true;
         } else if args[1] == "--detail" || args[1] == "-d" {
             run_mode.detail = true;
-        }else {
+        } else {
             print_help();
             exit(0);
         }
@@ -484,6 +484,15 @@ fn main() {
         print_help();
         exit(0);
     }
+
+    return run_mode;
+}
+
+fn main() {
+
+    
+
+    let run_mode = args_to_runmode();
 
     if run_mode.debug {
         match fs::File::create(".sockdig.log") {
