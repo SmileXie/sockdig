@@ -17,6 +17,8 @@ use netlink_packet_sock_diag::{
     NetlinkHeader, NetlinkMessage, NetlinkPayload, SockDiagMessage,
 };
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
+use structopt::StructOpt;
+
 
 enum RespEntry {
     TCP(InetResponse),
@@ -33,11 +35,21 @@ enum SockType {
     Unix
 }
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "basic")]
 struct RunMode {
+    #[structopt(long = "debug")]
     debug: bool,
+    #[structopt(short = "d", long = "detail")]
     detail: bool,
 }
 
+impl RunMode {
+
+    fn display(& self) {
+        log::debug!("args: {:?}", self);
+    }
+}
 
 struct DigResult {
     resp: Vec<RespEntry>,
@@ -465,6 +477,9 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
 
 fn args_to_runmode() -> RunMode {
 
+    let mut run_mode = RunMode::from_args();
+   
+    /* 
     let args: Vec<String> = env::args().collect();
 
     let mut run_mode = RunMode {debug: false, detail: false};
@@ -484,15 +499,15 @@ fn args_to_runmode() -> RunMode {
         print_help();
         exit(0);
     }
+    */
 
     return run_mode;
 }
 
 fn main() {
+  
 
-    
-
-    let run_mode = args_to_runmode();
+    let run_mode: RunMode = args_to_runmode();
 
     if run_mode.debug {
         match fs::File::create(".sockdig.log") {
@@ -505,6 +520,8 @@ fn main() {
             },
         };  
     }
+
+    run_mode.display();
 
     let sock = match sock_init() {
         Ok(sock) => sock,
