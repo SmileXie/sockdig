@@ -42,6 +42,8 @@ struct RunMode {
     debug: bool,
     #[structopt(short = "d", long = "detail")]
     detail: bool,
+    #[structopt(short = "p", long = "pid", default_value ="0")]
+    pid: i32,
 }
 
 impl RunMode {
@@ -87,13 +89,13 @@ impl DigResult {
     }
 
     // todo: fn detail(), print detailed memory info in detail
-    fn detail(&self) {
+    fn detail(&self, pid: i32) {
         let mut num = 0;
         for resp_entry in &self.resp {
+            let mut pid_match = false;
             match resp_entry {
                 RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                    println!("Entry {}", num);
-                    num += 1;
+                    
                     let src: String = format!("{}:{}",
                             r.header.socket_id.source_address, 
                             r.header.socket_id.source_port);
@@ -101,16 +103,28 @@ impl DigResult {
                             r.header.socket_id.destination_address, 
                             r.header.socket_id.destination_port);
                     let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
-                    let mut proc_stats_str = String::new();
+                    let mut proc_stats_str = String::new();                    
                     match proc_stats {
                         Some(states) => {                            
                             for stat in states {
                                 let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
                                 proc_stats_str.push_str(&a_proc_str);
-                            }                            
+                                if pid == stat.pid {
+                                    pid_match = true;
+                                }
+                            }
+                            if pid != 0 && !pid_match { // no pid match, skip this entry
+                                continue;
+                            }    
                         },
-                        None => {}
+                        None => {
+                            if pid != 0 {
+                                continue;
+                            }
+                        }
                     }
+                    println!("Entry {}", num);
+                    num += 1;
                     println!("\tProtocol: {}", self.get_protocol_str(resp_entry));
                     println!("\tState: {}", self.state_str(r.header.state, resp_entry));
                     println!("\tSource: {}", src);
@@ -119,8 +133,7 @@ impl DigResult {
                     println!("\tAccessing Processes: {}", proc_stats_str);
                 },
                 RespEntry::UNIX(r) => {
-                    println!("Entry {}", num);
-                    num += 1;
+                    
                     let src: String = format!("*:{}", r.header.inode);
                     let dst_inode: String = match r.peer() {
                         Some(p) => p.to_string(),
@@ -134,11 +147,22 @@ impl DigResult {
                             for stat in states {
                                 let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
                                 proc_stats_str.push_str(&a_proc_str);
-                            }                            
+                                if pid == stat.pid {
+                                    pid_match = true;
+                                }
+                            }
+                            if pid != 0 && !pid_match { // no pid match, skip this entry
+                                continue;
+                            }    
                         },
-                        None => {}
+                        None => {
+                            if pid != 0 {
+                                continue;
+                            }
+                        }
                     }
-
+                    println!("Entry {}", num);
+                    num += 1;
                     println!("\tProtocol: {}", self.get_protocol_str(resp_entry));
                     println!("\tState: {}", self.state_str(r.header.state, resp_entry));
                     println!("\tSource: {}", src);
@@ -151,12 +175,13 @@ impl DigResult {
         }
     }
 
-    fn summary(&self) {
+    fn summary(&self, pid: i32) {
         println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
             "Protocol", "State", "Source", "Destination", 
             "Inode", "Processes");
         
         for resp_entry in &self.resp {
+            let mut pid_match = false;
             match resp_entry {
                 RespEntry::TCP(r) | RespEntry::UDP(r) => {
                     let src: String = format!("{}:{}",
@@ -174,7 +199,13 @@ impl DigResult {
                             for stat in states {
                                 let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
                                 proc_stats_str.push_str(&a_proc_str);
+                                if pid == stat.pid {
+                                    pid_match = true;
+                                }
                             }
+                            if pid != 0 && !pid_match { // no pid match, skip this entry
+                                continue;
+                            }    
                 
                             println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
                                 self.get_protocol_str(resp_entry),
@@ -182,11 +213,14 @@ impl DigResult {
                                 r.header.inode, proc_stats_str);
                             
                         },
-                        None => {           
-                                println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
-                                    self.get_protocol_str(resp_entry),
-                                    self.state_str(r.header.state, resp_entry), src, dst, 
-                                    r.header.inode);
+                        None => {      
+                            if pid != 0 {
+                                continue;
+                            }     
+                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                                self.get_protocol_str(resp_entry),
+                                self.state_str(r.header.state, resp_entry), src, dst, 
+                                r.header.inode);
                         }
                     }
 
@@ -207,6 +241,12 @@ impl DigResult {
                             for stat in states {
                                 let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
                                 proc_stats_str.push_str(&a_proc_str);
+                                if pid == stat.pid {
+                                    pid_match = true;
+                                }
+                            }
+                            if pid != 0 && !pid_match { // no pid match, skip this entry
+                                continue;
                             }
                 
                             println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
@@ -215,11 +255,14 @@ impl DigResult {
                                 r.header.inode, proc_stats_str);
                             
                         },
-                        None => {           
-                                println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
-                                    self.get_protocol_str(resp_entry),
-                                    self.state_str(r.header.state, resp_entry), src, dst, 
-                                    r.header.inode);
+                        None => {
+                            if pid != 0 {
+                                continue;
+                            }
+                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                                self.get_protocol_str(resp_entry),
+                                self.state_str(r.header.state, resp_entry), src, dst, 
+                                r.header.inode);
                         }
                     }
                 }
@@ -542,9 +585,9 @@ fn main() {
 
     rsts.resolve_procfs();
     if run_mode.detail {
-        rsts.detail();
+        rsts.detail(run_mode.pid);
     } else {
-        rsts.summary();
+        rsts.summary(run_mode.pid);
     }
 }
 
