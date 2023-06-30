@@ -88,7 +88,6 @@ impl DigResult {
         return Ok(0);
     }
 
-    // todo: fn detail(), print detailed memory info in detail
     fn detail(&self, pid: i32) {
         let mut num = 0;
         for resp_entry in &self.resp {
@@ -322,12 +321,6 @@ impl DigResult {
         }
     }
 } 
-
-fn print_help() {
-    println!("Sockdig Help:");
-    println!("\t-h, --help: help");
-    println!("\t-d, --detail: detailed socket info");
-}
 
 fn sock_init() -> io::Result<Socket> {
     let mut sock =  Socket::new(NETLINK_SOCK_DIAG)?;
@@ -596,5 +589,9 @@ fn main() {
     https://github.com/eminence/procfs/blob/master/examples/netstat.rs
     https://man7.org/linux/man-pages/man7/sock_diag.7.html
     https://github.com/little-dude/netlink/blob/master/netlink-packet-sock-diag/examples/dump_ipv4.rs
+
+    TODO:
+    display interface of listening socket, eg. lo in 127.0.0.53%lo:domain  
+    ipv6 socket display
 
  */
