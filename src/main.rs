@@ -44,16 +44,20 @@ impl SysInterface {
 
     fn init(&mut self) {
         self.interfaces = NetworkInterface::show().unwrap();
+
+        for intf in self.interfaces.iter() {
+            log::debug!("{:#?}", intf);
+        }
     }
 
-    fn getname_by_id(&self, id: u32) -> String {
+    fn getname_by_id(&self, id: u32) -> Option<String> {
         for intf in self.interfaces.iter() {
             if id == intf.index {
-                return intf.name.clone();
+                return Some(intf.name.clone());
             }
         }
 
-        return String::from("");
+        return None;
     }
 }
 
@@ -110,15 +114,18 @@ impl DigResult {
         return Ok(0);
     }
 
-    fn detail(&self, pid: i32) {
+    fn detail(&self, pid: i32, intfs: &SysInterface) {
         let mut num = 0;
         for resp_entry in &self.resp {
             let mut pid_match = false;
             match resp_entry {
                 RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                    
-                    let src: String = format!("{}:{}",
-                            r.header.socket_id.source_address, 
+                    let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
+                        Some(name) => format!("{}{}", "&", name),
+                        None => String::from(""),
+                    };
+                    let src: String = format!("{}{}:{}",
+                            r.header.socket_id.source_address, intf_name,
                             r.header.socket_id.source_port);
                     let dst: String = format!("{}:{}",
                             r.header.socket_id.destination_address, 
@@ -196,7 +203,7 @@ impl DigResult {
         }
     }
 
-    fn summary(&self, pid: i32) {
+    fn summary(&self, pid: i32, intfs: &SysInterface) {
         println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
             "Protocol", "State", "Source", "Destination", 
             "Inode", "Processes");
@@ -205,8 +212,12 @@ impl DigResult {
             let mut pid_match = false;
             match resp_entry {
                 RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                    let src: String = format!("{}:{}",
-                            r.header.socket_id.source_address, 
+                    let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
+                        Some(name) => format!("{}{}", "&", name),
+                        None => String::from(""),
+                    };
+                    let src: String = format!("{}{}:{}",
+                            r.header.socket_id.source_address, intf_name,
                             r.header.socket_id.source_port);
                     let dst: String = format!("{}:{}",
                             r.header.socket_id.destination_address, 
@@ -580,6 +591,8 @@ fn main() {
     }
 
     run_mode.display();
+    let mut intfs: SysInterface = SysInterface { interfaces: Vec::new() };
+    intfs.init();
 
     let sock = match sock_init() {
         Ok(sock) => sock,
@@ -600,9 +613,9 @@ fn main() {
 
     rsts.resolve_procfs();
     if run_mode.detail {
-        rsts.detail(run_mode.pid);
+        rsts.detail(run_mode.pid, &intfs);
     } else {
-        rsts.summary(run_mode.pid);
+        rsts.summary(run_mode.pid, &intfs);
     }
 }
 
@@ -613,7 +626,7 @@ fn main() {
     https://github.com/little-dude/netlink/blob/master/netlink-packet-sock-diag/examples/dump_ipv4.rs
 
     TODO:
-    display interface of listening socket, eg. lo in 127.0.0.53%lo:domain  
-    ipv6 socket display
+    [] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
+    [] ipv6 socket display
 
  */
