@@ -18,7 +18,8 @@ use netlink_packet_sock_diag::{
 };
 use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 use structopt::StructOpt;
-
+use network_interface::NetworkInterface;
+use network_interface::NetworkInterfaceConfig;
 
 enum RespEntry {
     TCP(InetResponse),
@@ -33,6 +34,27 @@ enum SockType {
     TcpV6,
     UdpV6,
     Unix
+}
+
+struct SysInterface {
+    interfaces: Vec<NetworkInterface>,
+}
+
+impl SysInterface {
+
+    fn init(&mut self) {
+        self.interfaces = NetworkInterface::show().unwrap();
+    }
+
+    fn getname_by_id(&self, id: u32) -> String {
+        for intf in self.interfaces.iter() {
+            if id == intf.index {
+                return intf.name.clone();
+            }
+        }
+
+        return String::from("");
+    }
 }
 
 #[derive(StructOpt, Debug)]

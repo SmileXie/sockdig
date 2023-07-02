@@ -416,6 +416,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "network-interface"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "296ae2183dab440e352740b1fcf0589d8058afa40bc29fd163227ddb01fbf539"
+dependencies = [
+ "cc",
+ "libc",
+ "thiserror",
+ "winapi",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,6 +592,7 @@ dependencies = [
  "log",
  "netlink-packet-sock-diag",
  "netlink-sys",
+ "network-interface",
  "procfs",
  "regex",
  "simplelog",
