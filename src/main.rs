@@ -204,7 +204,7 @@ impl DigResult {
     }
 
     fn summary(&self, pid: i32, intfs: &SysInterface) {
-        println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+        println!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
             "Protocol", "State", "Source", "Destination", 
             "Inode", "Processes");
         
@@ -239,7 +239,7 @@ impl DigResult {
                                 continue;
                             }    
                 
-                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
                                 self.get_protocol_str(resp_entry),
                                 self.state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode, proc_stats_str);
@@ -249,7 +249,7 @@ impl DigResult {
                             if pid != 0 {
                                 continue;
                             }     
-                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
                                 self.get_protocol_str(resp_entry),
                                 self.state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode);
@@ -281,7 +281,7 @@ impl DigResult {
                                 continue;
                             }
                 
-                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}{:<24}", 
+                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
                                 self.get_protocol_str(resp_entry),
                                 self.state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode, proc_stats_str);
@@ -291,7 +291,7 @@ impl DigResult {
                             if pid != 0 {
                                 continue;
                             }
-                            println!("{:<9}{:<16}{:<24}{:<24}{:<8}", 
+                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
                                 self.get_protocol_str(resp_entry),
                                 self.state_str(r.header.state, resp_entry), src, dst, 
                                 r.header.inode);
@@ -626,7 +626,8 @@ fn main() {
     https://github.com/little-dude/netlink/blob/master/netlink-packet-sock-diag/examples/dump_ipv4.rs
 
     TODO:
-    [] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
-    [] ipv6 socket display
+    [*] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
+    [ ] ipv6 socket display
+    [ ] filter TCP UDP UNIX sockets.
 
  */
