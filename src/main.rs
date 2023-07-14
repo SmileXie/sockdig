@@ -70,6 +70,16 @@ struct RunMode {
     detail: bool,
     #[structopt(short = "p", long = "pid", default_value ="0")]
     pid: i32,
+    #[structopt(short = "t", long = "tcp")]
+    tcp: bool,
+    #[structopt(short = "u", long = "udp")]
+    udp: bool,
+    #[structopt(short = "x", long = "unix")]
+    unix: bool,
+    #[structopt(short = "6", long = "v6")]
+    v6: bool,
+    #[structopt(short = "4", long = "v4")]
+    v4: bool,
 }
 
 impl RunMode {
@@ -457,12 +467,16 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
             ..Default::default()
         },
         payload: SockDiagMessage::InetRequest(InetRequest {
-            family: AF_INET,
+            family: match sock_type {
+                SockType::TcpV4 | SockType::UdpV4 => AF_INET,
+                SockType::TcpV6 | SockType::UdpV6 => AF_INET6,
+                _ => AF_INET,
+            },
             protocol: match sock_type {
-                    SockType::TcpV4 => IPPROTO_TCP,
-                    SockType::UdpV4 => IPPROTO_UDP,
-                    _ => IPPROTO_NONE,
-                },
+                SockType::TcpV4 | SockType::TcpV6 => IPPROTO_TCP,
+                SockType::UdpV4 | SockType::UdpV6 => IPPROTO_UDP,
+                _ => IPPROTO_NONE,
+            },
             extensions: ExtensionFlags::empty(),
             states: inet::StateFlags::all(),
             socket_id: SocketId::new_v4(),
@@ -513,8 +527,8 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
                 NetlinkPayload::InnerMessage(SockDiagMessage::InetResponse(response)) => {
                     rsts.resp.push(
                         match sock_type {
-                            SockType::TcpV4 => RespEntry::TCP((*response).clone()),
-                            SockType::UdpV4 => RespEntry::UDP((*response).clone()),
+                            SockType::TcpV4 | SockType::TcpV6 => RespEntry::TCP((*response).clone()),
+                            SockType::UdpV4 | SockType::UdpV6 => RespEntry::UDP((*response).clone()),
                             _ => RespEntry::NONE,
                         }
                     );
@@ -573,10 +587,37 @@ fn args_to_runmode() -> RunMode {
     return run_mode;
 }
 
+fn query_netlink(sock: &Socket, rsts: &mut DigResult, run_mode: &RunMode) {
+
+    if !run_mode.tcp && !run_mode.udp && !run_mode.unix && !run_mode.v4 && !run_mode.v6 { 
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
+        query_netlink_for_unix(sock, rsts);
+    } else {
+        if run_mode.tcp {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
+            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
+        }
+        if run_mode.udp {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
+            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
+        }
+        if run_mode.unix {
+            query_netlink_for_unix(sock, rsts);
+        }    
+    }
+}
+
+fn run_mode_fill_default(run_mode: &mut RunMode) {
+    
+}
+
 fn main() {
   
 
-    let run_mode: RunMode = args_to_runmode();
+    let mut run_mode: RunMode = args_to_runmode();
 
     if run_mode.debug {
         match fs::File::create(".sockdig.log") {
@@ -607,9 +648,7 @@ fn main() {
         inode_to_pid_map: HashMap::new()
     };
 
-    query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::TcpV4);
-    query_netlink_for_tcp_udp(&sock, &mut rsts, SockType::UdpV4);
-    query_netlink_for_unix(&sock, &mut rsts);
+    query_netlink(&sock, &mut rsts, &run_mode);
 
     rsts.resolve_procfs();
     if run_mode.detail {
@@ -628,6 +667,6 @@ fn main() {
     TODO:
     [*] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
     [ ] ipv6 socket display
-    [ ] filter TCP UDP UNIX sockets.
+    [*] filter TCP UDP UNIX sockets.
 
  */
