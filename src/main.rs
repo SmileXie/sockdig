@@ -43,7 +43,7 @@ struct SysInterface {
 impl SysInterface {
 
     fn init(&mut self) {
-        self.interfaces = NetworkInterface::show().unwrap();
+        self.interfaces = NetworkInterface::show().unwrap(); // todo, eliminate unwrap
 
         for intf in self.interfaces.iter() {
             log::debug!("{:#?}", intf);
@@ -88,7 +88,7 @@ impl RunMode {
         log::debug!("args: {:?}", self);
     }
  
-    fn run_mode_fill_default(&mut self) {
+    fn fill_default(&mut self) {
         
         if !self.tcp && !self.udp && !self.unix {
             if self.v4 || self.v6 {
@@ -580,7 +580,7 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
 
 fn args_to_runmode() -> RunMode {
 
-    let mut run_mode = RunMode::from_args();
+    let run_mode = RunMode::from_args();
    
     /* 
     let args: Vec<String> = env::args().collect();
@@ -609,6 +609,7 @@ fn args_to_runmode() -> RunMode {
 
 fn query_netlink(sock: &Socket, rsts: &mut DigResult, run_mode: &RunMode) {
 
+    // todo, handle Result 
     if run_mode.tcp && run_mode.v4 {
         query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
     }
@@ -644,7 +645,7 @@ fn main() {
     }
 
     run_mode.display();
-    run_mode.run_mode_fill_default();
+    run_mode.fill_default();
     run_mode.display();
     
     let mut intfs: SysInterface = SysInterface { interfaces: Vec::new() };
@@ -681,7 +682,7 @@ fn main() {
 
     TODO:
     [*] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
-    [ ] ipv6 socket display
+    [*] ipv6 socket display
     [*] filter TCP UDP UNIX sockets.
 
  */
