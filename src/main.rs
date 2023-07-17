@@ -87,6 +87,26 @@ impl RunMode {
     fn display(& self) {
         log::debug!("args: {:?}", self);
     }
+ 
+    fn run_mode_fill_default(&mut self) {
+        
+        if !self.tcp && !self.udp && !self.unix {
+            if self.v4 || self.v6 {
+                self.tcp = true;
+                self.udp = true;
+            } else {
+                self.tcp = true;
+                self.udp = true;
+                self.unix = true;
+            }
+        }
+
+        if !self.v4 && !self.v6 {
+            self.v4 = true;
+            self.v6 = true;
+        }
+
+    }
 }
 
 struct DigResult {
@@ -589,29 +609,21 @@ fn args_to_runmode() -> RunMode {
 
 fn query_netlink(sock: &Socket, rsts: &mut DigResult, run_mode: &RunMode) {
 
-    if !run_mode.tcp && !run_mode.udp && !run_mode.unix && !run_mode.v4 && !run_mode.v6 { 
+    if run_mode.tcp && run_mode.v4 {
         query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
-        query_netlink_for_unix(sock, rsts);
-    } else {
-        if run_mode.tcp {
-            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
-            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
-        }
-        if run_mode.udp {
-            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
-            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
-        }
-        if run_mode.unix {
-            query_netlink_for_unix(sock, rsts);
-        }    
     }
-}
-
-fn run_mode_fill_default(run_mode: &mut RunMode) {
-    
+    if run_mode.tcp && run_mode.v6 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
+    }
+    if run_mode.udp && run_mode.v4 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
+    }
+    if run_mode.udp && run_mode.v6 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
+    }
+    if run_mode.unix {
+        query_netlink_for_unix(sock, rsts);
+    }    
 }
 
 fn main() {
@@ -632,6 +644,9 @@ fn main() {
     }
 
     run_mode.display();
+    run_mode.run_mode_fill_default();
+    run_mode.display();
+    
     let mut intfs: SysInterface = SysInterface { interfaces: Vec::new() };
     intfs.init();
 
