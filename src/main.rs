@@ -65,23 +65,23 @@ impl SysInterface {
 #[derive(StructOpt, Debug)]
 #[structopt(name = "Sockdig", version = "1.0.0", about = "A socket debug tool")]
 struct SockArgs {
-    #[structopt(long = "debug")]
+    #[structopt(long = "debug", help = "debug log redirected to a local file")]
     debug: bool,
-    #[structopt(short = "d", long = "detail")]
+    #[structopt(short = "d", long = "detail", help = "Print socket info in detail")]
     detail: bool,
-    #[structopt(short = "p", long = "pid", default_value ="0")]
+    #[structopt(short = "p", long = "pid", default_value ="0", help = "Print sockets opened by specific process")]
     pid: i32,
     #[structopt(short = "t", long = "tcp", help = "Print only tcp sockets")]
     tcp: bool,
-    #[structopt(short = "u", long = "udp")]
+    #[structopt(short = "u", long = "udp", help = "Print only udp sockets")]
     udp: bool,
-    #[structopt(short = "x", long = "unix")]
+    #[structopt(short = "x", long = "unix", help = "Print only unix sockets")]
     unix: bool,
-    #[structopt(short = "6", long = "v6")]
+    #[structopt(short = "6", long = "v6", help = "Print only IPv6 sockets")]
     v6: bool,
-    #[structopt(short = "4", long = "v4")]
+    #[structopt(short = "4", long = "v4", help = "Print only IPv4 sockets")]
     v4: bool,
-    #[structopt(short = "l", long = "listen", help = "Print listning sockets")]
+    #[structopt(short = "l", long = "listen", help = "Print only listning sockets")]
     listen: bool,
 }
 
