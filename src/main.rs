@@ -61,16 +61,17 @@ impl SysInterface {
     }
 }
 
+// todo： help string for each argument.
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
-struct RunMode {
+#[structopt(name = "Sockdig", version = "1.0.0", about = "A socket debug tool")]
+struct SockArgs {
     #[structopt(long = "debug")]
     debug: bool,
     #[structopt(short = "d", long = "detail")]
     detail: bool,
     #[structopt(short = "p", long = "pid", default_value ="0")]
     pid: i32,
-    #[structopt(short = "t", long = "tcp")]
+    #[structopt(short = "t", long = "tcp", help = "Print only tcp sockets")]
     tcp: bool,
     #[structopt(short = "u", long = "udp")]
     udp: bool,
@@ -80,9 +81,11 @@ struct RunMode {
     v6: bool,
     #[structopt(short = "4", long = "v4")]
     v4: bool,
+    #[structopt(short = "l", long = "listen", help = "Print listning sockets")]
+    listen: bool,
 }
 
-impl RunMode {
+impl SockArgs {
 
     fn display(& self) {
         log::debug!("args: {:?}", self);
@@ -393,7 +396,7 @@ fn sock_init() -> io::Result<Socket> {
     Ok(sock)
 }
 
-fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult) 
+fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) 
         -> Result<u32, io::Error> {
             
     let mut packet = NetlinkMessage {
@@ -402,7 +405,10 @@ fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult)
             ..Default::default()
         },
         payload: SockDiagMessage::UnixRequest(UnixRequest {
-            state_flags: unix::StateFlags::all(),
+            state_flags: match sockargs.listen {
+                false => unix::StateFlags::all(),
+                true => unix::StateFlags::LISTEN,
+            },
             inode: 0,
             show_flags: ShowFlags::all(),
             cookie: [0; 8]
@@ -478,7 +484,7 @@ fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult)
     return Ok(0);
 }
 
-fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: SockType) 
+fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: SockType, sockargs: &SockArgs) 
         -> Result<u32, io::Error> {
 
     let mut packet = NetlinkMessage {
@@ -498,7 +504,10 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
                 _ => IPPROTO_NONE,
             },
             extensions: ExtensionFlags::empty(),
-            states: inet::StateFlags::all(),
+            states: match sockargs.listen {
+                false => inet::StateFlags::all(),
+                true => inet::StateFlags::LISTEN,
+            }, 
             socket_id: SocketId::new_v4(),
         })
         .into(),
@@ -578,22 +587,22 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
     return Ok(0);
 }
 
-fn args_to_runmode() -> RunMode {
+fn sockarge_resolve() -> SockArgs {
 
-    let run_mode = RunMode::from_args();
+    let sockargs = SockArgs::from_args();
    
     /* 
     let args: Vec<String> = env::args().collect();
 
-    let mut run_mode = RunMode {debug: false, detail: false};
+    let mut sockargs = SockArgs {debug: false, detail: false};
     if args.len() == 2 {
         if args[1] == "--help" || args[1] == "-h" {
             print_help();            
             exit(0);
         } else if args[1] == "--debug" {
-            run_mode.debug = true;
+            sockargs.debug = true;
         } else if args[1] == "--detail" || args[1] == "-d" {
-            run_mode.detail = true;
+            sockargs.detail = true;
         } else {
             print_help();
             exit(0);
@@ -604,35 +613,35 @@ fn args_to_runmode() -> RunMode {
     }
     */
 
-    return run_mode;
+    return sockargs;
 }
 
-fn query_netlink(sock: &Socket, rsts: &mut DigResult, run_mode: &RunMode) {
+fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) {
 
     // todo, handle Result 
-    if run_mode.tcp && run_mode.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4);
+    if sockargs.tcp && sockargs.v4 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs);
     }
-    if run_mode.tcp && run_mode.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6);
+    if sockargs.tcp && sockargs.v6 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6, sockargs);
     }
-    if run_mode.udp && run_mode.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4);
+    if sockargs.udp && sockargs.v4 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4, sockargs);
     }
-    if run_mode.udp && run_mode.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6);
+    if sockargs.udp && sockargs.v6 {
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6, sockargs);
     }
-    if run_mode.unix {
-        query_netlink_for_unix(sock, rsts);
-    }    
+    if sockargs.unix {
+        query_netlink_for_unix(sock, rsts, sockargs);
+    }
 }
 
 fn main() {
   
 
-    let mut run_mode: RunMode = args_to_runmode();
+    let mut sockargs: SockArgs = sockarge_resolve();
 
-    if run_mode.debug {
+    if sockargs.debug {
         match fs::File::create(".sockdig.log") {
             Ok(fd) => {
                 simplelog::WriteLogger::init(simplelog::LevelFilter::Debug, simplelog::Config::default(), fd).unwrap();
@@ -644,9 +653,9 @@ fn main() {
         };  
     }
 
-    run_mode.display();
-    run_mode.fill_default();
-    run_mode.display();
+    sockargs.display();
+    sockargs.fill_default();
+    sockargs.display();
     
     let mut intfs: SysInterface = SysInterface { interfaces: Vec::new() };
     intfs.init();
@@ -664,13 +673,13 @@ fn main() {
         inode_to_pid_map: HashMap::new()
     };
 
-    query_netlink(&sock, &mut rsts, &run_mode);
+    query_netlink(&sock, &mut rsts, &sockargs);
 
     rsts.resolve_procfs();
-    if run_mode.detail {
-        rsts.detail(run_mode.pid, &intfs);
+    if sockargs.detail {
+        rsts.detail(sockargs.pid, &intfs);
     } else {
-        rsts.summary(run_mode.pid, &intfs);
+        rsts.summary(sockargs.pid, &intfs);
     }
 }
 
@@ -684,5 +693,8 @@ fn main() {
     [*] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
     [*] ipv6 socket display
     [*] filter TCP UDP UNIX sockets.
+    [*] filter listening socket
+    [ ] show socket memory usage
+    [ ] Arguments are used as filtered or complemented ?
 
  */
