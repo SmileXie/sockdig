@@ -1,6 +1,6 @@
 # sockdig
 Sockdig 1.0.0
-A socket debug tool
+A socket debug tool. A much more powerful alternative to ss(8)
 
 USAGE:
     sockdig [FLAGS] [OPTIONS]

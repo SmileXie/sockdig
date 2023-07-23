@@ -42,12 +42,18 @@ struct SysInterface {
 
 impl SysInterface {
 
-    fn init(&mut self) {
-        self.interfaces = NetworkInterface::show().unwrap(); // todo, eliminate unwrap
+    fn init(&mut self) -> Result<(), network_interface::Error> {
+
+        match NetworkInterface::show() {
+            Ok(ints) => self.interfaces = ints,
+            Err(e) => return Err(e)
+        }
 
         for intf in self.interfaces.iter() {
             log::debug!("{:#?}", intf);
         }
+
+        return Ok(());
     }
 
     fn getname_by_id(&self, id: u32) -> Option<String> {
@@ -619,6 +625,7 @@ fn sockarge_resolve() -> SockArgs {
 fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) {
 
     // todo, handle Result 
+    // https://stackoverflow.com/questions/55755552/what-is-the-rust-equivalent-to-a-try-catch-statement
     if sockargs.tcp && sockargs.v4 {
         query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs);
     }
@@ -658,7 +665,11 @@ fn main() {
     sockargs.display();
     
     let mut intfs: SysInterface = SysInterface { interfaces: Vec::new() };
-    intfs.init();
+    if let Err(e) = intfs.init() {
+        println!("Fail to init interfaces. {}", e);
+        log::error!("Fail to init interfaces. {}", e);
+        exit(1);
+    }
 
     let sock = match sock_init() {
         Ok(sock) => sock,
@@ -695,6 +706,6 @@ fn main() {
     [*] filter TCP UDP UNIX sockets.
     [*] filter listening socket
     [ ] show socket memory usage
-    [ ] Arguments are used as filtered or complemented ?
+    [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
 
  */
