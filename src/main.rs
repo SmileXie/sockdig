@@ -125,7 +125,7 @@ struct DigResult {
 
 impl DigResult {
     
-    fn resolve_procfs(&mut self) -> Result<u32, ProcError> {
+    fn resolve_procfs(&mut self) -> Result<(), ProcError> {
         let all_procs = procfs::process::all_processes()?;
 
         // build up a map between socket inodes and processes:
@@ -150,7 +150,7 @@ impl DigResult {
             }
         }
 
-        return Ok(0);
+        return Ok(());
     }
 
     fn detail(&self, pid: i32, intfs: &SysInterface) {
@@ -403,7 +403,7 @@ fn sock_init() -> io::Result<Socket> {
 }
 
 fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) 
-        -> Result<u32, io::Error> {
+        -> Result<(), io::Error> {
             
     let mut packet = NetlinkMessage {
         header: NetlinkHeader {
@@ -487,11 +487,11 @@ fn query_netlink_for_unix(sock: &Socket, rsts: &mut DigResult, sockargs: &SockAr
     
     }
 
-    return Ok(0);
+    return Ok(());
 }
 
 fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: SockType, sockargs: &SockArgs) 
-        -> Result<u32, io::Error> {
+        -> Result<(), io::Error> {
 
     let mut packet = NetlinkMessage {
         header: NetlinkHeader {
@@ -590,7 +590,7 @@ fn query_netlink_for_tcp_udp(sock: &Socket, rsts: &mut DigResult, sock_type: Soc
     
     }
 
-    return Ok(0);
+    return Ok(());
 }
 
 fn sockarge_resolve() -> SockArgs {
@@ -622,25 +622,27 @@ fn sockarge_resolve() -> SockArgs {
     return sockargs;
 }
 
-fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) {
+fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
 
     // todo, handle Result 
     // https://stackoverflow.com/questions/55755552/what-is-the-rust-equivalent-to-a-try-catch-statement
     if sockargs.tcp && sockargs.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs)?;
     }
     if sockargs.tcp && sockargs.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6, sockargs);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6, sockargs)?;
     }
     if sockargs.udp && sockargs.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4, sockargs);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4, sockargs)?;
     }
     if sockargs.udp && sockargs.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6, sockargs);
+        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6, sockargs)?;
     }
     if sockargs.unix {
-        query_netlink_for_unix(sock, rsts, sockargs);
+        query_netlink_for_unix(sock, rsts, sockargs)?;
     }
+
+    Ok(())
 }
 
 fn main() {
@@ -684,9 +686,18 @@ fn main() {
         inode_to_pid_map: HashMap::new()
     };
 
-    query_netlink(&sock, &mut rsts, &sockargs);
+    if let Err(e) = query_netlink(&sock, &mut rsts, &sockargs) {
+        println!("Fail to query kernel {}", e);
+        log::error!("Fail to query kernel {}", e);
+        exit(1);
+    }
 
-    rsts.resolve_procfs();
+    if let Err(e) = rsts.resolve_procfs() {
+        println!("Fail to resolve procfs {}", e);
+        log::error!("Fail to resolve procfs {}", e);
+        exit(1);
+    }
+
     if sockargs.detail {
         rsts.detail(sockargs.pid, &intfs);
     } else {
