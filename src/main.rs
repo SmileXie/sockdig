@@ -718,5 +718,7 @@ fn main() {
     [*] filter listening socket
     [ ] show socket memory usage
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
+    [ ] Display the two ends of socket graphically
+    [ ] Check the display of a fd to a opened file.
 
  */
