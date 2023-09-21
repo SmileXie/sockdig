@@ -1,4 +1,5 @@
 use std::env;
+use std::f32::consts::E;
 use std::fs;
 use std::path;
 use procfs::ProcError;
@@ -647,6 +648,7 @@ fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Re
 
     if let Err(e) = query() {
         log::error!("Fail to query sock info through kernel: {:?}", e);
+        return Err(e);
     }
     Ok(())
 }
@@ -725,5 +727,6 @@ fn main() {
     [ ] show socket memory usage
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
     [ ] Display the two ends of socket graphically
+    [ ] socket type of ICMP6 not displayed 
 
  */
