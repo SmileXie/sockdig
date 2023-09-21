@@ -67,7 +67,6 @@ impl SysInterface {
     }
 }
 
-// todo： help string for each argument.
 #[derive(StructOpt, Debug)]
 #[structopt(name = "Sockdig", version = "1.0.0", about = "A socket debug tool")]
 struct SockArgs {
@@ -624,24 +623,31 @@ fn sockarge_resolve() -> SockArgs {
 
 fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
 
-    // todo, handle Result 
+    // handle Result 
     // https://stackoverflow.com/questions/55755552/what-is-the-rust-equivalent-to-a-try-catch-statement
-    if sockargs.tcp && sockargs.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs)?;
-    }
-    if sockargs.tcp && sockargs.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6, sockargs)?;
-    }
-    if sockargs.udp && sockargs.v4 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4, sockargs)?;
-    }
-    if sockargs.udp && sockargs.v6 {
-        query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6, sockargs)?;
-    }
-    if sockargs.unix {
-        query_netlink_for_unix(sock, rsts, sockargs)?;
-    }
+    let mut query = || -> Result<(), io::Error> {
 
+        if sockargs.tcp && sockargs.v4 {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV4, sockargs)?;
+        }
+        if sockargs.tcp && sockargs.v6 {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::TcpV6, sockargs)?;
+        }
+        if sockargs.udp && sockargs.v4 {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV4, sockargs)?;
+        }
+        if sockargs.udp && sockargs.v6 {
+            query_netlink_for_tcp_udp(sock, rsts, SockType::UdpV6, sockargs)?;
+        }
+        if sockargs.unix {
+            query_netlink_for_unix(sock, rsts, sockargs)?;
+        }
+        Ok(())
+    };
+
+    if let Err(e) = query() {
+        log::error!("Fail to query sock info through kernel: {:?}", e);
+    }
     Ok(())
 }
 
@@ -719,6 +725,5 @@ fn main() {
     [ ] show socket memory usage
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
     [ ] Display the two ends of socket graphically
-    [ ] Check the display of a fd to a opened file.
 
  */
