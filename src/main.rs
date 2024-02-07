@@ -1,5 +1,4 @@
 use std::env;
-use std::f32::consts::E;
 use std::fs;
 use std::path;
 use procfs::ProcError;
@@ -760,7 +759,7 @@ fn main() {
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
     [ ] Display the two ends of socket graphically
     [ ] socket type of ICMP6 not displayed 
-    [ ] Add a monitor mode
+    [ ] Add a monitor mode by ncurses. arrow keys to select monitor, F to refresh screen, enter to display traffic graph.
     [ ] use pcap to display traffic speed by socket. use filter method to search the traffic by pcap and get the statistics.
 
  */
