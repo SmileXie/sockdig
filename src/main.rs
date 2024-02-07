@@ -21,6 +21,9 @@ use netlink_sys::{protocols::NETLINK_SOCK_DIAG, Socket, SocketAddr};
 use structopt::StructOpt;
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
+use ncurses;
+use std::thread;
+use std::time::Duration;
 
 enum RespEntry {
     TCP(InetResponse),
@@ -89,6 +92,8 @@ struct SockArgs {
     v4: bool,
     #[structopt(short = "l", long = "listen", help = "Print only listning sockets")]
     listen: bool,
+    #[structopt(short = "m", long = "monitor", help = "Monitor mode. Continuously monitor socket information. Use Ctrl+C to exit.")]
+    monitor: bool,
 }
 
 impl SockArgs {
@@ -653,6 +658,27 @@ fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Re
     Ok(())
 }
 
+fn monitor_mode(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
+    ncurses::initscr();
+    ncurses::keypad(ncurses::stdscr(), true);
+    ncurses::noecho();
+    ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+
+    loop {
+        ncurses::clear();
+        ncurses::mv(0, 0);
+
+        ncurses::addstr("test");
+
+        
+        ncurses::refresh();
+        thread::sleep(Duration::from_secs(2));
+    }
+
+
+    Ok(())
+}
+
 fn main() {
   
 
@@ -694,6 +720,11 @@ fn main() {
         inode_to_pid_map: HashMap::new()
     };
 
+    if sockargs.monitor {
+        monitor_mode(&sock, &mut rsts, &sockargs);
+        exit(0);
+    }
+
     if let Err(e) = query_netlink(&sock, &mut rsts, &sockargs) {
         println!("Fail to query kernel {}", e);
         log::error!("Fail to query kernel {}", e);
@@ -718,6 +749,7 @@ fn main() {
     https://github.com/eminence/procfs/blob/master/examples/netstat.rs
     https://man7.org/linux/man-pages/man7/sock_diag.7.html
     https://github.com/little-dude/netlink/blob/master/netlink-packet-sock-diag/examples/dump_ipv4.rs
+    https://docs.rs/pcap/latest/pcap/struct.Capture.html#method.filter
 
     TODO:
     [*] display interface of listening socket, eg. lo in 127.0.0.53%lo:22
@@ -728,5 +760,7 @@ fn main() {
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
     [ ] Display the two ends of socket graphically
     [ ] socket type of ICMP6 not displayed 
+    [ ] Add a monitor mode
+    [ ] use pcap to display traffic speed by socket. use filter method to search the traffic by pcap and get the statistics.
 
  */
