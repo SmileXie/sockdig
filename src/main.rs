@@ -125,6 +125,7 @@ impl SockArgs {
 struct DigResult {
     resp: Vec<RespEntry>,
     inode_to_pid_map: HashMap<u64, Vec<Stat>>,
+    cursor: usize, // pointer to first resp in monitor mode
 }
 
 impl DigResult {
@@ -252,100 +253,116 @@ impl DigResult {
             "Inode", "Processes");
         
         for resp_entry in &self.resp {
-            let mut pid_match = false;
-            match resp_entry {
-                RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                    let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
-                        Some(name) => format!("{}{}", "&", name),
-                        None => String::from(""),
-                    };
-                    let src: String = format!("{}{}:{}",
-                            r.header.socket_id.source_address, intf_name,
-                            r.header.socket_id.source_port);
-                    let dst: String = format!("{}:{}",
-                            r.header.socket_id.destination_address, 
-                            r.header.socket_id.destination_port);
-
-                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
-                    
-                    match proc_stats {
-                        Some(states) => {
-                            let mut proc_stats_str = String::new();
-                            for stat in states {
-                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
-                                proc_stats_str.push_str(&a_proc_str);
-                                if pid == stat.pid {
-                                    pid_match = true;
-                                }
-                            }
-                            if pid != 0 && !pid_match { // no pid match, skip this entry
-                                continue;
-                            }    
-                
-                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
-                                self.get_protocol_str(resp_entry),
-                                self.state_str(r.header.state, resp_entry), src, dst, 
-                                r.header.inode, proc_stats_str);
-                            
-                        },
-                        None => {      
-                            if pid != 0 {
-                                continue;
-                            }     
-                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
-                                self.get_protocol_str(resp_entry),
-                                self.state_str(r.header.state, resp_entry), src, dst, 
-                                r.header.inode);
-                        }
-                    }
-
+            match self.format_one_rst(resp_entry, pid, intfs) {
+                Some(s) => {
+                    println!("{}", s);
                 },
-                RespEntry::UNIX(r) => {
-                    let src: String = format!("*:{}", r.header.inode);
-                    let dst_inode: String = match r.peer() {
-                        Some(p) => p.to_string(),
-                        None => "*".to_string()
-                    };
-                    let dst: String = format!("*:{}", dst_inode);
+                None => {
 
-                    let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
-                    
-                    match proc_stats {
-                        Some(states) => {
-                            let mut proc_stats_str = String::new();
-                            for stat in states {
-                                let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
-                                proc_stats_str.push_str(&a_proc_str);
-                                if pid == stat.pid {
-                                    pid_match = true;
-                                }
-                            }
-                            if pid != 0 && !pid_match { // no pid match, skip this entry
-                                continue;
-                            }
-                
-                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
-                                self.get_protocol_str(resp_entry),
-                                self.state_str(r.header.state, resp_entry), src, dst, 
-                                r.header.inode, proc_stats_str);
-                            
-                        },
-                        None => {
-                            if pid != 0 {
-                                continue;
-                            }
-                            println!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
-                                self.get_protocol_str(resp_entry),
-                                self.state_str(r.header.state, resp_entry), src, dst, 
-                                r.header.inode);
-                        }
-                    }
+                    continue;
                 }
-                _ => {}
             }
-
         }
     }        
+
+    fn format_one_rst(&self, resp_entry: &RespEntry, pid: i32, intfs: &SysInterface) -> Option<String> {
+        let mut pid_match = false;
+        match resp_entry {
+            RespEntry::TCP(r) | RespEntry::UDP(r) => {
+                let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
+                    Some(name) => format!("{}{}", "&", name),
+                    None => String::from(""),
+                };
+                let src: String = format!("{}{}:{}",
+                        r.header.socket_id.source_address, intf_name,
+                        r.header.socket_id.source_port);
+                let dst: String = format!("{}:{}",
+                        r.header.socket_id.destination_address, 
+                        r.header.socket_id.destination_port);
+
+                let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
+                
+                match proc_stats {
+                    Some(states) => {
+                        let mut proc_stats_str = String::new();
+                        for stat in states {
+                            let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                            proc_stats_str.push_str(&a_proc_str);
+                            if pid == stat.pid {
+                                pid_match = true;
+                            }
+                        }
+                        if pid != 0 && !pid_match {
+                            return None;
+                        }    
+            
+                        let rst_str = format!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
+                            self.get_protocol_str(resp_entry),
+                            self.state_str(r.header.state, resp_entry), src, dst, 
+                            r.header.inode, proc_stats_str);
+                        return Some(rst_str);
+                    },
+                    None => {      
+                        if pid != 0 {
+                            return None;
+                        }     
+                        let rst_str = format!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
+                            self.get_protocol_str(resp_entry),
+                            self.state_str(r.header.state, resp_entry), src, dst, 
+                            r.header.inode);
+                        
+                        return Some(rst_str);
+                    }
+                }
+
+            },
+            RespEntry::UNIX(r) => {
+                let src: String = format!("*:{}", r.header.inode);
+                let dst_inode: String = match r.peer() {
+                    Some(p) => p.to_string(),
+                    None => "*".to_string()
+                };
+                let dst: String = format!("*:{}", dst_inode);
+
+                let proc_stats = self.inode_to_pid_map.get(&(r.header.inode as u64));
+                
+                match proc_stats {
+                    Some(states) => {
+                        let mut proc_stats_str = String::new();
+                        for stat in states {
+                            let a_proc_str = format!("{}/{},", stat.pid, stat.comm);
+                            proc_stats_str.push_str(&a_proc_str);
+                            if pid == stat.pid {
+                                pid_match = true;
+                            }
+                        }
+                        if pid != 0 && !pid_match { // no pid match, skip this entry
+                            return None;
+                        }
+            
+                        let rst_str = format!("{:<9}{:<16}{:<32}{:<32}{:<8}{:<24}", 
+                            self.get_protocol_str(resp_entry),
+                            self.state_str(r.header.state, resp_entry), src, dst, 
+                            r.header.inode, proc_stats_str);
+                        return Some(rst_str);
+                    },
+                    None => {
+                        if pid != 0 {
+                            return None
+                        }
+                        let rst_str = format!("{:<9}{:<16}{:<32}{:<32}{:<8}", 
+                            self.get_protocol_str(resp_entry),
+                            self.state_str(r.header.state, resp_entry), src, dst, 
+                            r.header.inode);
+                        return Some(rst_str);
+                    }
+                }
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
 
     fn state_str(&self, state: u8, resp_entry: &RespEntry) -> &str {
         return match resp_entry {
@@ -657,7 +674,17 @@ fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Re
     Ok(())
 }
 
-fn monitor_mode(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
+fn monitor_mode_display_result(rsts: &DigResult) {
+
+    let maxy = ncurses::getmaxy(ncurses::stdscr());
+
+    for rst in rsts.resp[rsts.cursor..].iter() {
+
+    }
+
+}
+
+fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
     ncurses::initscr();
     ncurses::keypad(ncurses::stdscr(), true);
     ncurses::noecho();
@@ -667,8 +694,7 @@ fn monitor_mode(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Res
         ncurses::clear();
         ncurses::mv(0, 0);
 
-        ncurses::addstr("test");
-
+        monitor_mode_display_result(rsts);
         
         ncurses::refresh();
         thread::sleep(Duration::from_secs(2));
@@ -716,18 +742,19 @@ fn main() {
 
     let mut rsts: DigResult = DigResult {
         resp: Vec::new(),
-        inode_to_pid_map: HashMap::new()
+        inode_to_pid_map: HashMap::new(),
+        cursor: 0
     };
-
-    if sockargs.monitor {
-        monitor_mode(&sock, &mut rsts, &sockargs);
-        exit(0);
-    }
 
     if let Err(e) = query_netlink(&sock, &mut rsts, &sockargs) {
         println!("Fail to query kernel {}", e);
         log::error!("Fail to query kernel {}", e);
         exit(1);
+    }
+
+    if sockargs.monitor {
+        monitor_mode(&sock, &rsts, &sockargs);
+        exit(0);
     }
 
     if let Err(e) = rsts.resolve_procfs() {
@@ -757,7 +784,6 @@ fn main() {
     [*] filter listening socket
     [ ] show socket memory usage
     [*] Arguments are used as filtered or complement ? -l -t -u -x -4 -6 are used as filters, others are complement.
-    [ ] Display the two ends of socket graphically
     [ ] socket type of ICMP6 not displayed 
     [ ] Add a monitor mode by ncurses. arrow keys to select monitor, F to refresh screen, enter to display traffic graph.
     [ ] use pcap to display traffic speed by socket. use filter method to search the traffic by pcap and get the statistics.
