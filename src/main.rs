@@ -125,7 +125,6 @@ impl SockArgs {
 struct DigResult {
     resp: Vec<RespEntry>,
     inode_to_pid_map: HashMap<u64, Vec<Stat>>,
-    cursor: usize, // pointer to first resp in monitor mode
 }
 
 impl DigResult {
@@ -674,27 +673,86 @@ fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Re
     Ok(())
 }
 
-fn monitor_mode_display_result(rsts: &DigResult) {
+struct MonitorScreen {
+    start_idx: i32,
+    maxy: i32,
+    cursor: i32
+}
 
-    let maxy = ncurses::getmaxy(ncurses::stdscr());
+static COLOR_PAIR_HIGHLIGHT: i16 = 1;
+static COLOR_PAIR_WIN: i16 = 2;
 
-    for rst in rsts.resp[rsts.cursor..].iter() {
+fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &SysInterface, mon_screen: &mut MonitorScreen) {
 
+    let mut cur_y = 0;
+    let mut idx = 0;
+    
+
+    for rst in rsts.resp.iter() {
+        if idx < mon_screen.start_idx - 1 {
+            idx += 1;
+            continue;
+        }
+
+        if mon_screen.start_idx > 0 &&  idx == mon_screen.start_idx - 1 {
+            ncurses::addstr("...\n");
+            idx += 1;
+            cur_y += 1;
+            continue;
+        }
+
+        if cur_y == mon_screen.maxy - 1 {
+            ncurses::addstr("...\n");
+            break;
+        }
+
+        if idx == mon_screen.cursor {
+            ncurses::attron(ncurses::COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+        }
+
+        match rsts.format_one_rst(rst, sockargs.pid, intfs) {
+            Some(s) => {
+                ncurses::addstr(&(s + "\n"));
+                if idx == mon_screen.cursor {
+                    ncurses::attroff(ncurses::COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+                }
+        
+                idx += 1;
+                cur_y += 1;
+            },
+            None => {
+                idx += 1;
+                continue;
+            }
+        }        
     }
 
 }
 
-fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs) -> Result<(), io::Error> {
+fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &SysInterface) -> Result<(), io::Error> {
+
+
+
     ncurses::initscr();
     ncurses::keypad(ncurses::stdscr(), true);
     ncurses::noecho();
     ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
 
+    ncurses::start_color();
+    ncurses::init_pair(COLOR_PAIR_HIGHLIGHT, ncurses::COLOR_BLACK, ncurses::COLOR_WHITE);
+    ncurses::init_pair(COLOR_PAIR_WIN, ncurses::COLOR_BLACK, ncurses::COLOR_CYAN);
+
+    let mut mon_screen: MonitorScreen = MonitorScreen {
+        start_idx: 0,
+        maxy: ncurses::getmaxy(ncurses::stdscr()),
+        cursor: 0
+    };
+
     loop {
         ncurses::clear();
         ncurses::mv(0, 0);
 
-        monitor_mode_display_result(rsts);
+        monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
         
         ncurses::refresh();
         thread::sleep(Duration::from_secs(2));
@@ -743,7 +801,6 @@ fn main() {
     let mut rsts: DigResult = DigResult {
         resp: Vec::new(),
         inode_to_pid_map: HashMap::new(),
-        cursor: 0
     };
 
     if let Err(e) = query_netlink(&sock, &mut rsts, &sockargs) {
@@ -752,21 +809,23 @@ fn main() {
         exit(1);
     }
 
-    if sockargs.monitor {
-        monitor_mode(&sock, &rsts, &sockargs);
-        exit(0);
-    }
-
     if let Err(e) = rsts.resolve_procfs() {
         println!("Fail to resolve procfs {}", e);
         log::error!("Fail to resolve procfs {}", e);
         exit(1);
     }
 
-    if sockargs.detail {
-        rsts.detail(sockargs.pid, &intfs);
+    if sockargs.monitor {
+        // monitor mode
+        let _ = monitor_mode(&sock, &rsts, &sockargs, &intfs);
+        exit(0);
     } else {
-        rsts.summary(sockargs.pid, &intfs);
+        // oneshot mode
+        if sockargs.detail {
+            rsts.detail(sockargs.pid, &intfs);
+        } else {
+            rsts.summary(sockargs.pid, &intfs);
+        }
     }
 }
 
