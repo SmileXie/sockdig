@@ -687,6 +687,8 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
     let mut cur_y = 0;
     let mut idx = 0;
     
+    ncurses::clear();
+    ncurses::mv(0, 0);
 
     for rst in rsts.resp.iter() {
         if idx < mon_screen.start_idx - 1 {
@@ -727,11 +729,11 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
         }        
     }
 
+    ncurses::refresh();
+
 }
 
 fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &SysInterface) -> Result<(), io::Error> {
-
-
 
     ncurses::initscr();
     ncurses::keypad(ncurses::stdscr(), true);
@@ -748,14 +750,31 @@ fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
         cursor: 0
     };
 
+    monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
+    
     loop {
-        ncurses::clear();
-        ncurses::mv(0, 0);
 
-        monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
+        let ch = ncurses::getch();
+
+        match ch {
+            ncurses::KEY_UP => {
+                if mon_screen.cursor > 0 {
+                    mon_screen.cursor -= 1;    
+                }                
+                monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
+            },
+            ncurses::KEY_DOWN => {
+                if mon_screen.cursor < (rsts.resp.len() - 1) as i32 {
+                    mon_screen.cursor += 1;    
+                }                
+                monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
+            },
+            _ => {
+                monitor_mode_display_result(rsts, sockargs, intfs, &mut mon_screen);
+            }
+        }
         
-        ncurses::refresh();
-        thread::sleep(Duration::from_secs(2));
+        //thread::sleep(Duration::from_secs(2));
     }
 
 
