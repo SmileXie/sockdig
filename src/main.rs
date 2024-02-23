@@ -674,7 +674,6 @@ fn query_netlink(sock: &Socket, rsts: &mut DigResult, sockargs: &SockArgs) -> Re
 }
 
 struct MonitorScreen {
-    start_idx: i32,
     maxy: i32,
     cursor: i32
 }
@@ -690,13 +689,19 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
     ncurses::clear();
     ncurses::mv(0, 0);
 
+    let start_idx = if mon_screen.cursor - mon_screen.maxy + 3 < 0 {
+        0
+    } else {
+        mon_screen.cursor - mon_screen.maxy + 3
+    };
+
     for rst in rsts.resp.iter() {
-        if idx < mon_screen.start_idx - 1 {
+        if idx < start_idx - 1 {
             idx += 1;
             continue;
         }
 
-        if mon_screen.start_idx > 0 &&  idx == mon_screen.start_idx - 1 {
+        if start_idx > 1 &&  idx == start_idx - 1 {
             ncurses::addstr("...\n");
             idx += 1;
             cur_y += 1;
@@ -745,7 +750,6 @@ fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
     ncurses::init_pair(COLOR_PAIR_WIN, ncurses::COLOR_BLACK, ncurses::COLOR_CYAN);
 
     let mut mon_screen: MonitorScreen = MonitorScreen {
-        start_idx: 0,
         maxy: ncurses::getmaxy(ncurses::stdscr()),
         cursor: 0
     };
