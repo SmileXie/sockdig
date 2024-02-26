@@ -23,6 +23,7 @@ use network_interface::NetworkInterfaceConfig;
 use ncurses;
 use std::thread;
 use std::time::Duration;
+use pcap;
 
 enum RespEntry {
     TCP(InetResponse),
@@ -59,7 +60,7 @@ impl SysInterface {
         return Ok(());
     }
 
-    fn getname_by_id(&self, id: u32) -> Option<String> {
+    fn get_name_by_id(&self, id: u32) -> Option<String> {
         for intf in self.interfaces.iter() {
             if id == intf.index {
                 return Some(intf.name.clone());
@@ -68,6 +69,19 @@ impl SysInterface {
 
         return None;
     }
+
+    fn find_interface_by_ip(&self, ip_address: &str) -> Option<String> {
+
+        for intf in self.interfaces.iter() {
+            for a in intf.addr.iter() {
+                if a.ip().to_string() == ip_address {
+                    return Some(intf.name.clone());
+                }
+            }
+        }
+      
+        None
+    }    
 }
 
 #[derive(StructOpt, Debug)]
@@ -163,7 +177,7 @@ impl DigResult {
             let mut pid_match = false;
             match resp_entry {
                 RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                    let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
+                    let intf_name = match intfs.get_name_by_id(r.header.socket_id.interface_id) {
                         Some(name) => format!("{}{}", "&", name),
                         None => String::from(""),
                     };
@@ -268,7 +282,7 @@ impl DigResult {
         let mut pid_match = false;
         match resp_entry {
             RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                let intf_name = match intfs.getname_by_id(r.header.socket_id.interface_id) {
+                let intf_name = match intfs.get_name_by_id(r.header.socket_id.interface_id) {
                     Some(name) => format!("{}{}", "&", name),
                     None => String::from(""),
                 };
@@ -689,10 +703,10 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
     ncurses::clear();
     ncurses::mv(0, 0);
 
-    let start_idx = if mon_screen.cursor - mon_screen.maxy + 3 < 0 {
+    let start_idx = if mon_screen.cursor - mon_screen.maxy + 4 < 0 {
         0
     } else {
-        mon_screen.cursor - mon_screen.maxy + 3
+        mon_screen.cursor - mon_screen.maxy + 4
     };
 
     for rst in rsts.resp.iter() {
@@ -708,7 +722,7 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
             continue;
         }
 
-        if cur_y == mon_screen.maxy - 1 {
+        if cur_y == mon_screen.maxy - 2 {
             ncurses::addstr("...\n");
             break;
         }
@@ -734,6 +748,8 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
         }        
     }
 
+    ncurses::mv(mon_screen.maxy - 1, 0);
+    ncurses::addstr("Up/Down: Select, F: Flow Chart, Q: Exit.\n");
     ncurses::refresh();
 
 }
