@@ -1,5 +1,8 @@
 use std::env;
+use std::process::Command;
 use std::fs;
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::path;
 use procfs::ProcError;
 use simplelog;
@@ -70,18 +73,102 @@ impl SysInterface {
         return None;
     }
 
-    fn find_interface_by_ip(&self, ip_address: &str) -> Option<String> {
+    fn find_interface_by_ip(&self, input_ip: &IpAddr) -> Option<String> {
 
         for intf in self.interfaces.iter() {
             for a in intf.addr.iter() {
-                if a.ip().to_string() == ip_address {
+                if a.ip() == *input_ip {
                     return Some(intf.name.clone());
                 }
             }
         }
       
+        return None;
+    }
+
+    fn find_remote_ip_by_resp_entry(&self, resp_entry: &RespEntry) -> Option<IpAddr> {
+        // find out remote ip: source ip or destination ip
+        let mut remote_ip: IpAddr;
+
+        match resp_entry {
+            RespEntry::TCP(r) | RespEntry::UDP(r) => {
+                if r.header.socket_id.source_address.is_loopback() {
+                    return Some(r.header.socket_id.destination_address);
+                }
+                if r.header.socket_id.destination_address.is_loopback() {
+                    return Some(r.header.socket_id.source_address);
+                }
+                if let Some(_) = self.find_interface_by_ip(&r.header.socket_id.source_address) {
+                    return Some(r.header.socket_id.destination_address);
+                }
+                if let Some(_) = self.find_interface_by_ip(&r.header.socket_id.destination_address) {
+                    return Some(r.header.socket_id.source_address);
+                }
+                return None;
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
+
+    fn get_outgoing_interface(&self, dest_ip: &str) -> io::Result<String> {
+        let output = Command::new("ip")
+            .args(&["route", "get", dest_ip])
+            .output()?;
+    
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to execute `ip route get` for {}", dest_ip),
+            ));
+        }
+    
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        self.parse_interface(&output_str).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Could not determine the interface for destination IP {}", dest_ip),
+            )
+        })
+    }
+    
+    // parse output of `ip route get` , output is interface name
+    fn parse_interface(&self, output: &str) -> Option<String> {
+        for line in output.lines() {
+            if line.starts_with("dev") || line.contains(" dev ") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                let dev_index = parts.iter().position(|&r| r == "dev").unwrap_or(0) + 1;
+                if parts.len() > dev_index {
+                    return Some(parts[dev_index].to_string());
+                }
+            }
+        }
         None
-    }    
+    }
+
+    fn find_interface_by_resp_entry(&self, rst_entry: &RespEntry) -> Option<String> {
+        // find the communication interface of a socket
+        // by the ip address of the remote host
+        match self.find_remote_ip_by_resp_entry(rst_entry) {
+            Some(remote_ip) => {
+                // find the output interface of remote ip
+                // some function link "ip route get"
+                match self.get_outgoing_interface(&remote_ip.to_string()) {
+                    Ok(interface) => {
+                        return Some(interface);
+                    }
+                    Err(e) => {
+                        log::warn!("fail to find interface for ip {}. {}", remote_ip.to_string(), e);
+                        return None;
+                    }
+                }
+            }
+            None => {
+                return None;
+            }
+        }         
+    }
 }
 
 #[derive(StructOpt, Debug)]
@@ -277,6 +364,42 @@ impl DigResult {
             }
         }
     }        
+
+    fn get_band_width(&self, intfs: &SysInterface, resp_entry: &RespEntry) -> Option<u32> {
+        match resp_entry {
+            RespEntry::TCP(r) | RespEntry::UDP(r) => {
+                if r.header.state != TCP_ESTABLISHED {
+                    return None;
+                }
+                
+                
+                let filter = String::new();
+                return Some(0)
+            },
+            _ => {
+                return None;
+            }
+        }
+    }
+
+    fn test_outgoing_interface(&self, intfs: &SysInterface, resp_entry: &RespEntry) {
+        match resp_entry {
+            RespEntry::TCP(r) | RespEntry::UDP(r) => {
+                if r.header.state != TCP_ESTABLISHED {
+                    return;
+                }
+
+                if let Some(intf) = intfs.find_interface_by_resp_entry(resp_entry){
+                    log::debug!("Dest IP: {}, outgoing interface {}", r.header.socket_id.destination_address, intf);
+                }
+               
+                return;
+            },
+            _ => {
+                return;
+            }
+        }
+    }
 
     fn format_one_rst(&self, resp_entry: &RespEntry, pid: i32, intfs: &SysInterface) -> Option<String> {
         let mut pid_match = false;
@@ -740,6 +863,8 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
         
                 idx += 1;
                 cur_y += 1;
+
+                rsts.test_outgoing_interface(intfs, rst);
             },
             None => {
                 idx += 1;
