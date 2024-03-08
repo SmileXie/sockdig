@@ -26,7 +26,7 @@ use network_interface::NetworkInterfaceConfig;
 use ncurses;
 use std::thread;
 use std::time::Duration;
-use pcap;
+use pcap::{Device, Capture};
 
 enum RespEntry {
     TCP(InetResponse),
@@ -365,42 +365,6 @@ impl DigResult {
         }
     }        
 
-    fn get_band_width(&self, intfs: &SysInterface, resp_entry: &RespEntry) -> Option<u32> {
-        match resp_entry {
-            RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                if r.header.state != TCP_ESTABLISHED {
-                    return None;
-                }
-                
-                
-                let filter = String::new();
-                return Some(0)
-            },
-            _ => {
-                return None;
-            }
-        }
-    }
-
-    fn test_outgoing_interface(&self, intfs: &SysInterface, resp_entry: &RespEntry) {
-        match resp_entry {
-            RespEntry::TCP(r) | RespEntry::UDP(r) => {
-                if r.header.state != TCP_ESTABLISHED {
-                    return;
-                }
-
-                if let Some(intf) = intfs.find_interface_by_resp_entry(resp_entry){
-                    log::debug!("Dest IP: {}, outgoing interface {}", r.header.socket_id.destination_address, intf);
-                }
-               
-                return;
-            },
-            _ => {
-                return;
-            }
-        }
-    }
-
     fn format_one_rst(&self, resp_entry: &RespEntry, pid: i32, intfs: &SysInterface) -> Option<String> {
         let mut pid_match = false;
         match resp_entry {
@@ -550,6 +514,75 @@ impl DigResult {
         }
     }
 } 
+
+
+fn get_current_pack_num_by_resp_entry(intfs: &SysInterface, resp_entry: &RespEntry) -> Result<u32, pcap::Error> { 
+    match resp_entry {
+        RespEntry::TCP(r) | RespEntry::UDP(r) => {
+            if r.header.state != TCP_ESTABLISHED {
+                return Ok(0);
+            }
+            
+            let intf_str =  match find_outgoing_intf_by_rst_entry(intfs, resp_entry) {
+                Some(intf) => intf,
+                None => return Ok(0)
+            };
+
+            let filter_expr = format!(
+                "(src host {} and src port {} and dst host {} and dst port {} and {}) or (src host {} and src port {} and dst host {} and dst port {} and {})",
+                r.header.socket_id.source_address, 
+                r.header.socket_id.source_port,
+                r.header.socket_id.destination_address, 
+                r.header.socket_id.destination_port,
+                if let RespEntry::TCP(_r) = resp_entry {"tcp"} else {"udp"},
+                r.header.socket_id.destination_address, 
+                r.header.socket_id.destination_port,
+                r.header.socket_id.source_address, 
+                r.header.socket_id.source_port,
+                if let RespEntry::TCP(_r) = resp_entry {"tcp"} else {"udp"},
+            );
+
+            let mut cap = Capture::from_device(intf_str.as_str())?.open()?;
+            
+            cap.filter(&filter_expr, true)?;
+
+            let total = cap.stats()?.received;
+            /*
+            while let Ok(packet) = cap.next_packet() {
+                total_size += packet.header.len as u64;
+            }
+             */
+
+            return Ok(total)
+        },
+        _ => {
+            return Ok(0);
+        }
+    }
+}
+
+fn find_outgoing_intf_by_rst_entry
+    (intfs: &SysInterface, resp_entry: &RespEntry) -> Option<String> {
+    
+    match resp_entry {
+        RespEntry::TCP(r) | RespEntry::UDP(r) => {
+            if r.header.state != TCP_ESTABLISHED {
+                return None;
+            }
+
+            if let Some(intf) = intfs.find_interface_by_resp_entry(resp_entry){
+                log::debug!("Dest IP: {}, outgoing interface {}", r.header.socket_id.destination_address, intf);
+                return Some(intf);
+            }
+            
+            return None;
+        },
+        _ => {
+            return None;
+        }
+    }
+}
+
 
 fn sock_init() -> io::Result<Socket> {
     let mut sock =  Socket::new(NETLINK_SOCK_DIAG)?;
@@ -864,7 +897,7 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
                 idx += 1;
                 cur_y += 1;
 
-                rsts.test_outgoing_interface(intfs, rst);
+                
             },
             None => {
                 idx += 1;
