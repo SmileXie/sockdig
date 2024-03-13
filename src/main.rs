@@ -1,6 +1,10 @@
-use std::env;
+use std::sync::{Arc, Mutex};
+use std::sync::MutexGuard;
+use std::thread;
+use std::time::Duration;
 use std::process::Command;
 use std::fs;
+use std::error::Error;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::path;
@@ -24,8 +28,6 @@ use structopt::StructOpt;
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
 use ncurses;
-use std::thread;
-use std::time::Duration;
 use pcap::{Device, Capture};
 
 enum RespEntry {
@@ -223,9 +225,16 @@ impl SockArgs {
     }
 }
 
+struct BandWidthMeasurer {
+    total_bytes: u64,
+    bandwidth_bytes: u64,
+}
+
 struct DigResult {
     resp: Vec<RespEntry>,
-    inode_to_pid_map: HashMap<u64, Vec<Stat>>,
+    // inode is a key for sockets
+    inode_to_bandwidth: Arc<Mutex<HashMap<u64, BandWidthMeasurer>>>,
+    inode_to_pid_map: HashMap<u64, Vec<Stat>>, //todo: change Vec<Stat> to Stat 
 }
 
 impl DigResult {
@@ -912,7 +921,18 @@ fn monitor_mode_display_result(rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
 
 }
 
+fn update_bandwidth(inode_to_bandwidth: &mut MutexGuard<HashMap<u64, BandWidthMeasurer>>) {
+    
+}
+
 fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &SysInterface) -> Result<(), io::Error> {
+
+    let inode_to_bandwidth_clone = Arc::clone(&rsts.inode_to_bandwidth);
+    let handle = thread::spawn(move || {
+        let mut inode_to_bandwidth = inode_to_bandwidth_clone.lock().unwrap();
+        update_bandwidth(&mut inode_to_bandwidth);
+        thread::sleep(Duration::from_secs(5))
+    });
 
     ncurses::initscr();
     ncurses::keypad(ncurses::stdscr(), true);
@@ -952,14 +972,14 @@ fn monitor_mode(sock: &Socket, rsts: &DigResult, sockargs: &SockArgs, intfs: &Sy
             }
         }
         
-        //thread::sleep(Duration::from_secs(2));
     }
 
+    handle.join().unwrap();
 
     Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
   
 
     let mut sockargs: SockArgs = sockarge_resolve();
@@ -971,7 +991,7 @@ fn main() {
             },
             Err(io_error) => {
                 println!("Fail to create log file {}, {}", ".cdls.log", io_error);
-                exit(1);
+                return Err(Box::new(io_error));
             },
         };  
     }
@@ -984,38 +1004,38 @@ fn main() {
     if let Err(e) = intfs.init() {
         println!("Fail to init interfaces. {}", e);
         log::error!("Fail to init interfaces. {}", e);
-        exit(1);
+        return Err(Box::new(e));
     }
 
     let sock = match sock_init() {
         Ok(sock) => sock,
         Err(e) => {
             log::error!("Fail to init socket, {}", e);
-            exit(1);
+            return Err(Box::new(e));
         }
     };
 
     let mut rsts: DigResult = DigResult {
         resp: Vec::new(),
         inode_to_pid_map: HashMap::new(),
+        inode_to_bandwidth: Arc::new(Mutex::new(HashMap::new())),
     };
 
     if let Err(e) = query_netlink(&sock, &mut rsts, &sockargs) {
         println!("Fail to query kernel {}", e);
         log::error!("Fail to query kernel {}", e);
-        exit(1);
+        return Err(Box::new(e));
     }
 
     if let Err(e) = rsts.resolve_procfs() {
         println!("Fail to resolve procfs {}", e);
         log::error!("Fail to resolve procfs {}", e);
-        exit(1);
+        return Err(Box::new(e));
     }
 
     if sockargs.monitor {
         // monitor mode
         let _ = monitor_mode(&sock, &rsts, &sockargs, &intfs);
-        exit(0);
     } else {
         // oneshot mode
         if sockargs.detail {
@@ -1024,6 +1044,7 @@ fn main() {
             rsts.summary(sockargs.pid, &intfs);
         }
     }
+    return Ok(())
 }
 
 /*
